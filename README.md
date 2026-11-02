@@ -22,3 +22,11 @@
 5. **Redeploy:** Deployments → latest → Retry deployment. Done.
 
 Every push to `main` updates the site.
+
+## Features
+- **Two modes:** Deep Ball (AI-judged deep pulls) and Guess the Player (clues every 6s, first right guess wins; `lib/players.js`).
+- **Usernames, Elo and leaderboard:** online matches are rated (everyone starts at 1000). Practice is unrated.
+- **Player code:** shown on the Profile tab; paste it on another device to keep your name and record.
+- **Private rooms:** "Play a friend" makes a 5-letter code.
+- **Share card:** image of your result for Instagram/TikTok.
+- **Installable:** Add to Home Screen opens it full-screen like an app.
