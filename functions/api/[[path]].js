@@ -19,6 +19,7 @@ async function schema(db) {
     db.prepare("CREATE TABLE IF NOT EXISTS queue (pid TEXT PRIMARY KEY, name TEXT, t INTEGER)"),
     db.prepare("CREATE TABLE IF NOT EXISTS assign (pid TEXT PRIMARY KEY, match_id TEXT, t INTEGER)"),
     db.prepare("CREATE TABLE IF NOT EXISTS matches (id TEXT PRIMARY KEY, data TEXT, v INTEGER, t INTEGER)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS seen (pid TEXT PRIMARY KEY, t INTEGER)"),
     db.prepare("CREATE TABLE IF NOT EXISTS mq (pid TEXT PRIMARY KEY, name TEXT, mode TEXT, t INTEGER)"),
     db.prepare("CREATE TABLE IF NOT EXISTS players (pid TEXT PRIMARY KEY, name TEXT, lname TEXT UNIQUE, elo INTEGER, w INTEGER, l INTEGER, d INTEGER, t INTEGER)"),
     db.prepare("CREATE TABLE IF NOT EXISTS rooms (code TEXT PRIMARY KEY, host TEXT, name TEXT, mode TEXT, match_id TEXT, t INTEGER)"),
@@ -29,7 +30,11 @@ async function schema(db) {
 
 function newMatch(p1, n1, p2, n2, mode = "deep") {
   const base = { mode, p1, n1, p2, n2, round: 0, rs: Date.now() + 3000, s1: 0, s2: 0, done: false };
-  if (mode === "guess") return { ...base, puzzles: shuffle(PLAYERS.map((_, i) => i)).slice(0, ROUNDS), g: {}, wrong: {} };
+  if (mode === "guess") {
+    // Every match mixes eras: 3 players who debuted 2008 or later, 2 from before.
+    const idx = PLAYERS.map((_, i) => i), modern = shuffle(idx.filter(i => PLAYERS[i].y >= 2008)), old = shuffle(idx.filter(i => PLAYERS[i].y < 2008));
+    return { ...base, puzzles: shuffle([...modern.slice(0, 3), ...old.slice(0, 2)]), g: {}, wrong: {} };
+  }
   return { ...base, prompts: shuffle(BANK).slice(0, ROUNDS), a: {}, j: {} };
 }
 const MODES = ["deep", "guess"];
@@ -185,8 +190,8 @@ async function tickGuess(env, id) {
     const { m, v } = row, r = m.round, now = Date.now(), end = m.rs + CLUE_MS * CLUES;
     if (m.done || now < m.rs) return m;
     if (m.p2 === "bot" && !m.g[r] && m.botAt == null) {
-      // The bot gets it right 70% of the time, somewhere between clue 2 and clue 5.
-      m.botAt = Math.random() < 0.7 ? m.rs + CLUE_MS * (1 + Math.random() * 3.8) : -1;
+      // The bot gets it right about half the time, usually late (clue 3 to clue 5).
+      m.botAt = Math.random() < 0.5 ? m.rs + CLUE_MS * (2.3 + Math.random() * 2.6) : -1;
       if (await save(db, id, m, v)) continue; else continue;
     }
     if (m.p2 === "bot" && !m.g[r] && m.botAt > 0 && now >= m.botAt && now < end) {
@@ -266,7 +271,7 @@ function viewGuess(m, slot) {
     const g = m.g[i], P = PLAYERS[pi];
     if (i > r) return { clues: [] };
     const shown = g ? CLUES : Math.max(0, Math.min(CLUES, Math.floor((now - m.rs) / CLUE_MS) + 1));
-    return { clues: P.clues.slice(0, i < r ? CLUES : shown), answer: g ? P.name : null,
+    return { hint: P.hint, clues: P.clues.slice(0, i < r ? CLUES : shown), answer: g ? P.name : null,
       result: g ? (g.slot === 0 ? "none" : g.slot === slot ? "win" : "loss") : null, pts: g?.pts || 0,
       wrong: (m.wrong[i] || {})[slot] || 0, forfeit: !!((m.cheat || {})[i] || {})[slot], theyForfeit: !!((m.cheat || {})[i] || {})[o] };
   });
@@ -312,6 +317,14 @@ export async function onRequest({ request, env, params }) {
 
   const pid = clean(body.pid || url.searchParams.get("pid"), 40);
   if (!/^[a-z0-9]{8,40}$/i.test(pid)) return json({ error: "bad player id" }, 400);
+  // Online count: remember when each player was last here (at most one write per 30s each).
+  await db.prepare("INSERT INTO seen (pid,t) VALUES (?1,?2) ON CONFLICT(pid) DO UPDATE SET t=?2 WHERE seen.t < ?3").bind(pid, now, now - 30000).run();
+
+  if (path === "online") {
+    const r = await db.prepare("SELECT COUNT(*) AS n FROM seen WHERE t > ?").bind(now - 90000).first();
+    const q = await db.prepare("SELECT COUNT(*) AS n FROM mq WHERE t > ?").bind(now - 15000).first();
+    return json({ online: Math.max(1, r.n), searching: q.n });
+  }
 
   if (path === "me") {
     const p = await db.prepare("SELECT name, elo, w, l, d, lname FROM players WHERE pid=?").bind(pid).first();

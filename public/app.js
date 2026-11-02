@@ -10,7 +10,7 @@ let me = { name: store.get("db_name") || null, elo: 1000, w: 0, l: 0, d: 0, rank
 
 const MODES = {
   deep: { name: "Deep Ball", how: ["Same prompt for both players. 30 seconds to answer.", "Correct answers score 1–10. Forgotten deep cuts score high, famous or recent picks score low.", "Wrong or blank answers score 0. First to 3 rounds wins."] },
-  guess: { name: "Guess the Player", how: ["Clues drop one at a time, every 6 seconds, from hardest to easiest.", "First to name the player takes the round. Guess on clue 1 for 5 points, clue 5 for 1.", "Wrong guesses cost nothing, so keep firing. Most points after 5 players wins."] },
+  guess: { name: "Guess the Player", how: ["You start with the position and years played. Then a clue drops every 6 seconds, from hardest to easiest.", "First to name the player takes the round. Guess on clue 1 for 5 points, clue 5 for 1.", "Wrong guesses cost nothing, so keep firing. Most points after 5 players wins."] },
 };
 
 async function api(path, body) {
@@ -25,6 +25,7 @@ async function refreshMe() {
   try { const d = await api("me"); me = { ...me, ...d, name: d.name || me.name }; } catch {}
 }
 
+let online = 0;
 let timer = null, clockTimer = null, matchId = null, S = null, skew = 0, view = "home", lastKey = "", rated = false;
 const stop = () => { clearInterval(timer); timer = null; clearInterval(clockTimer); clockTimer = null; };
 
@@ -44,6 +45,7 @@ function home(msg) {
   app.innerHTML = `${nav("home")}
   <div class="panel">
     <div class="row between"><span>Playing as <b>${esc(me.name)}</b></span><span class="mono small">${me.elo} Elo${me.rank ? ` · #${me.rank}` : ""}</span></div>
+    <p class="online" id="online"><i></i><span>${online ? `${online} online now` : "Checking who's online…"}</span></p>
     <div class="seg" role="group" aria-label="Game mode">
       <button data-mode="deep" aria-pressed="${mode === "deep"}">Deep Ball</button>
       <button data-mode="guess" aria-pressed="${mode === "guess"}">Guess the Player</button>
@@ -57,6 +59,14 @@ function home(msg) {
   wireNav();
   document.querySelectorAll("[data-mode]").forEach(b => b.onclick = () => { mode = b.dataset.mode; store.set("db_mode", mode); home(); });
   $("#find").onclick = find;
+  const tickOnline = async () => {
+    if (view !== "home") return;
+    try {
+      const d = await api("online"); online = d.online;
+      const el = $("#online span"); if (el) el.textContent = `${d.online} online now${d.searching ? ` · ${d.searching} looking for a match` : ""}`;
+    } catch {}
+  };
+  tickOnline(); timer = setInterval(tickOnline, 20000);
   $("#friend").onclick = friend;
   $("#bot").onclick = async () => { try { join((await api("practice", { mode })).match); } catch (e) { home(e.message); } };
 }
@@ -241,7 +251,8 @@ function renderGuess() {
   if (key === lastKey) { clock(); return; }
   const wasWrong = lastKey && lastKey.split("|")[3] !== String(R.wrong) && state === "ask";
   lastKey = key;
-  const clueList = `<ol class="clues">${R.clues.map((c, i) => `<li class="${i === R.clues.length - 1 && state === "ask" ? "new" : ""}">${esc(c)}</li>`).join("")}</ol>`;
+  const hintLine = R.hint ? `<p class="hint">${esc(R.hint)}</p>` : "";
+  const clueList = hintLine + `<ol class="clues">${R.clues.map((c, i) => `<li class="${i === R.clues.length - 1 && state === "ask" ? "new" : ""}">${esc(c)}</li>`).join("")}</ol>`;
   let body;
   if (state === "ready") body = `<span class="label">Player ${r + 1} of ${S.totalRounds}</span><p class="big pulse">Get ready</p>`;
   else if (state === "out") body = `<span class="label">Player ${r + 1} of ${S.totalRounds}</span>${clueList}
