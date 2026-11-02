@@ -66,6 +66,10 @@ button:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
 .how{color:var(--muted);font-size:.92rem;margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:4px}
 .big{font-family:var(--display);font-size:2.6rem;text-transform:uppercase;line-height:1;margin:0;text-align:center}
 .err{color:var(--lose);font-size:.92rem;margin:0}
+.ac{position:relative;flex:1 1 100%;min-width:0}
+.sug{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:20;list-style:none;margin:0;padding:4px;background:#0a1019;border:1px solid var(--amber);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+.sug li{padding:11px 12px;border-radius:6px;cursor:pointer;font-size:1.05rem}
+.sug li[aria-selected="true"],.sug li:hover{background:var(--court);color:var(--amber)}
 #app{display:flex;flex-direction:column;gap:14px}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.between{justify-content:space-between}
 .small{font-size:.9rem;color:var(--muted);margin:0}

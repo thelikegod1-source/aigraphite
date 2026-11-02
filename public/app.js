@@ -213,14 +213,14 @@ function renderDeep() {
     body = `<span class="label">Round ${r + 1}</span><p class="big pulse">Get ready</p>`;
   } else {
     body = `<span class="label">Round ${r + 1}</span><p class="prompt">${esc(R.prompt)}</p>
-      <form id="f" class="btns" autocomplete="off"><input type="text" id="ans" maxlength="60" placeholder="Your deepest pull" aria-label="Your answer"><button>Lock in</button></form>
+      <form id="f" class="btns" autocomplete="off"><div class="ac"><input type="text" id="ans" maxlength="60" placeholder="Your deepest pull" aria-label="Your answer" role="combobox" aria-autocomplete="list" aria-controls="sug" aria-expanded="false" autocapitalize="words" spellcheck="false"><ul class="sug" id="sug" role="listbox" hidden></ul></div><button>Lock in</button></form>
       ${R.theyAnswered ? `<p class="status">Opponent locked in.</p>` : ""}`;
   }
   const keep = $("#ans")?.value || "";
   app.innerHTML = `${boardBar()}<div class="panel">${dots()}${body}</div>`;
   const inp = $("#ans");
   if (inp) {
-    inp.value = keep; inp.focus({ preventScroll: true });
+    inp.value = keep; inp.focus({ preventScroll: true }); autocomplete(inp);
     $("#f").onsubmit = async e => {
       e.preventDefault(); const text = inp.value.trim(); if (!text) return;
       inp.disabled = true;
@@ -249,7 +249,7 @@ function renderGuess() {
   } else {
     const worth = 6 - R.clues.length;
     body = `<span class="label">Player ${r + 1} of ${S.totalRounds} · clue ${R.clues.length}/5 · worth ${worth} pt${worth > 1 ? "s" : ""}</span>${clueList}
-      <form id="f" class="btns" autocomplete="off"><input type="text" id="ans" maxlength="40" placeholder="Who is it?" aria-label="Your guess"><button>Guess</button></form>
+      <form id="f" class="btns" autocomplete="off"><div class="ac"><input type="text" id="ans" maxlength="40" placeholder="Who is it?" aria-label="Your guess" role="combobox" aria-autocomplete="list" aria-controls="sug" aria-expanded="false" autocapitalize="words" spellcheck="false"><ul class="sug" id="sug" role="listbox" hidden></ul></div><button>Guess</button></form>
       ${R.wrong ? `<p class="status bad">Nope${R.wrong > 1 ? ` ×${R.wrong}` : ""}. Keep guessing.</p>` : ""}`;
   }
   const keep = wasWrong ? "" : $("#ans")?.value || "";
@@ -258,6 +258,7 @@ function renderGuess() {
   if (inp) {
     inp.value = keep; inp.focus({ preventScroll: true });
     if (wasWrong) inp.classList.add("shake");
+    autocomplete(inp);
     $("#f").onsubmit = async e => {
       e.preventDefault(); const text = inp.value.trim(); if (!text) return;
       try { await api("guess", { id: matchId, round: r, text }); } catch {}
@@ -267,6 +268,68 @@ function renderGuess() {
   }
   clock();
 }
+
+/* ---------- Name suggestions ---------- */
+// Pops up matching NBA names while typing, and forgives misspellings ("olajuwan" finds Olajuwon).
+let NAMES = null, namesLoading = null;
+const nrm = s => String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+function loadNames() {
+  namesLoading ||= fetch("/names.json").then(r => r.json()).then(list => { NAMES = list.map(n => ({ n, k: nrm(n), w: nrm(n).split(" ") })); }).catch(() => { namesLoading = null; });
+  return namesLoading;
+}
+function dist(a, b) { // edit distance, small strings only
+  const m = a.length, n = b.length; if (Math.abs(m - n) > 2) return 9;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[n];
+}
+function suggest(q) {
+  q = nrm(q); if (!NAMES || q.length < 2) return [];
+  const qt = q.split(" "), last = qt[qt.length - 1], out = [];
+  for (const x of NAMES) {
+    let s = null;
+    if (x.k.startsWith(q)) s = 0;
+    else if (qt.every(t => x.w.some(w => w.startsWith(t)))) s = 1;
+    else if (x.k.includes(q)) s = 2;
+    else if (last.length >= 3) {
+      // Misspelling: compare the typed word to the same-length start of each name word.
+      const tol = last.length >= 6 ? 2 : 1;
+      let best = 9;
+      for (const w of x.w) best = Math.min(best, dist(last, w.slice(0, last.length)), dist(last, w));
+      const others = qt.slice(0, -1).every(t => x.w.some(w => w.startsWith(t) || dist(t, w.slice(0, t.length)) <= 1));
+      if (best <= tol && others) s = 3 + best;
+    }
+    if (s !== null) out.push([s, x.n]);
+  }
+  return out.sort((a, b) => a[0] - b[0] || a[1].length - b[1].length || a[1].localeCompare(b[1])).slice(0, 6).map(x => x[1]);
+}
+function autocomplete(inp) {
+  const ul = inp.parentElement.querySelector(".sug"); if (!ul) return;
+  let items = [], active = -1;
+  const close = () => { ul.hidden = true; inp.setAttribute("aria-expanded", "false"); active = -1; };
+  const pick = name => { inp.value = name; close(); inp.focus(); };
+  const paint = () => {
+    ul.innerHTML = items.map((n, i) => `<li role="option" id="sug${i}" aria-selected="${i === active}">${esc(n)}</li>`).join("");
+    ul.hidden = !items.length; inp.setAttribute("aria-expanded", String(!!items.length));
+    ul.querySelectorAll("li").forEach((li, i) => li.addEventListener("pointerdown", e => { e.preventDefault(); pick(items[i]); }));
+  };
+  const update = async () => { if (!NAMES) await loadNames(); items = suggest(inp.value); active = -1; paint(); };
+  inp.addEventListener("input", update);
+  inp.addEventListener("keydown", e => {
+    if (ul.hidden) return;
+    if (e.key === "ArrowDown") { active = (active + 1) % items.length; paint(); e.preventDefault(); }
+    else if (e.key === "ArrowUp") { active = (active - 1 + items.length) % items.length; paint(); e.preventDefault(); }
+    else if (e.key === "Enter" && active >= 0) { pick(items[active]); e.preventDefault(); }
+    else if (e.key === "Escape") close();
+  });
+  inp.addEventListener("blur", () => setTimeout(close, 100));
+  if (inp.value) update();
+}
+loadNames();
 
 /* ---------- Share card ---------- */
 async function shareCard() {
