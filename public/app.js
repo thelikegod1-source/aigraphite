@@ -53,7 +53,7 @@ function home(msg) {
     ${msg ? `<p class="err">${esc(msg)}</p>` : ""}
   </div>
   <div class="panel"><span class="label">How ${esc(M.name)} works</span>
-    <ul class="how">${M.how.map(h => `<li>${esc(h)}</li>`).join("")}<li>Online matches change your Elo. Practice doesn't.</li></ul></div>`;
+    <ul class="how">${M.how.map(h => `<li>${esc(h)}</li>`).join("")}<li>Online matches change your Elo. Practice doesn't.</li><li>No googling: leave the game for more than 5 seconds mid-round and you forfeit that round.</li></ul></div>`;
   wireNav();
   document.querySelectorAll("[data-mode]").forEach(b => b.onclick = () => { mode = b.dataset.mode; store.set("db_mode", mode); home(); });
   $("#find").onclick = find;
@@ -193,7 +193,7 @@ function renderDeep() {
   const r = S.round, R = S.rounds[r];
   const pre = Date.now() + skew < S.rs;
   const state = R.verdict ? "verdict" : R.mine != null ? "wait" : pre ? "ready" : "ask";
-  const key = [r, state, S.myScore, S.theirScore, R.theyAnswered, S.judging].join("|");
+  const key = [r, state, S.myScore, S.theirScore, R.theyAnswered, S.judging, R.forfeit, R.theyForfeit].join("|");
   if (key === lastKey) { clock(); return; }
   lastKey = key;
   let body;
@@ -204,10 +204,12 @@ function renderDeep() {
       <span class="score ${x.valid ? "ok" : "bad"}">${x.valid ? x.score + "/10 depth" : "✗ invalid"}</span><span class="why">${esc(x.why)}</span></div>`;
     body = `<span class="label">Round ${r + 1} verdict</span><p class="prompt">${esc(R.prompt)}</p>
       <div class="ans">${card("You", R.mine, v.me, v.result === "win")}${card(S.them, R.theirs, v.them, v.result === "loss")}</div>
-      <p class="status">${v.result === "tie" ? "Tie round" : v.result === "win" ? "You took the round" : "They took the round"} · next round soon</p>`;
+      <p class="status">${v.result === "tie" ? "Tie round" : v.result === "win" ? "You took the round" : "They took the round"} · next round soon</p>
+      ${R.forfeit ? `<p class="cheat">${esc(cheatNote || "Forfeited the point, you cheater. 👀")}</p>` : ""}
+      ${R.theyForfeit ? `<p class="status ok">${esc(S.them)} left the game mid-round and forfeited. 👀</p>` : ""}`;
   } else if (state === "wait") {
     body = `<span class="label">Round ${r + 1}</span><p class="prompt">${esc(R.prompt)}</p>
-      <p class="status">You said <b>${esc(R.mine) || "nothing"}</b></p>
+      ${R.forfeit ? `<p class="cheat">${esc(cheatNote || "Forfeited the point, you cheater. 👀")}</p>` : `<p class="status">You said <b>${esc(R.mine) || "nothing"}</b></p>`}
       <p class="status pulse">${R.theyAnswered ? "Judge is deciding…" : "Waiting on opponent…"}</p>`;
   } else if (state === "ready") {
     body = `<span class="label">Round ${r + 1}</span><p class="big pulse">Get ready</p>`;
@@ -234,18 +236,21 @@ function renderDeep() {
 function renderGuess() {
   const r = S.round, R = S.rounds[r];
   const pre = Date.now() + skew < S.rs;
-  const state = R.result ? "result" : pre ? "ready" : "ask";
-  const key = [r, state, R.clues.length, R.wrong, S.myScore, S.theirScore].join("|");
+  const state = R.result ? "result" : pre ? "ready" : R.forfeit ? "out" : "ask";
+  const key = [r, state, R.clues.length, R.wrong, S.myScore, S.theirScore, R.theyForfeit].join("|");
   if (key === lastKey) { clock(); return; }
   const wasWrong = lastKey && lastKey.split("|")[3] !== String(R.wrong) && state === "ask";
   lastKey = key;
   const clueList = `<ol class="clues">${R.clues.map((c, i) => `<li class="${i === R.clues.length - 1 && state === "ask" ? "new" : ""}">${esc(c)}</li>`).join("")}</ol>`;
   let body;
   if (state === "ready") body = `<span class="label">Player ${r + 1} of ${S.totalRounds}</span><p class="big pulse">Get ready</p>`;
+  else if (state === "out") body = `<span class="label">Player ${r + 1} of ${S.totalRounds}</span>${clueList}
+      <p class="cheat">${esc(cheatNote || "Forfeited the point, you cheater. 👀")}</p><p class="status small">You're locked out of this player. Next one soon.</p>`;
   else if (state === "result") {
     const msg = R.result === "win" ? `You got it for <b>${R.pts}</b> point${R.pts > 1 ? "s" : ""}` : R.result === "loss" ? `${esc(S.them)} got it for ${R.pts}` : "Nobody got it";
     body = `<span class="label">Player ${r + 1} of ${S.totalRounds}</span><p class="prompt">${esc(R.answer)}</p>${clueList}
-      <p class="status ${R.result === "win" ? "ok" : ""}">${msg} · next player soon</p>`;
+      <p class="status ${R.result === "win" ? "ok" : ""}">${msg} · next player soon</p>
+      ${R.theyForfeit ? `<p class="status ok">${esc(S.them)} left the game mid-round and got locked out. 👀</p>` : ""}`;
   } else {
     const worth = 6 - R.clues.length;
     body = `<span class="label">Player ${r + 1} of ${S.totalRounds} · clue ${R.clues.length}/5 · worth ${worth} pt${worth > 1 ? "s" : ""}</span>${clueList}
@@ -268,6 +273,25 @@ function renderGuess() {
   }
   clock();
 }
+
+/* ---------- Anti-cheat ---------- */
+// Leaving the game mid-round (switching tabs or apps) forfeits the round. Leaving for under 5 seconds is forgiven (accidents happen).
+let hiddenAt = 0, cheatNote = "";
+function roundLive() {
+  if (view !== "match" || !S || S.done) return false;
+  const R = S.rounds[S.round], now = Date.now() + skew;
+  if (now < S.rs) return false;
+  return S.mode === "guess" ? !R.result && !R.forfeit && now < S.rs + S.secs * 1000 : R.mine == null && !R.verdict && now < S.rs + S.secs * 1000;
+}
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState === "hidden") { hiddenAt = roundLive() ? Date.now() : 0; return; }
+  if (!hiddenAt || Date.now() - hiddenAt < 5000 || !S) { hiddenAt = 0; return; }
+  hiddenAt = 0;
+  try {
+    const d = await api("forfeit", { id: matchId, round: S.round });
+    if (d.forfeited) { cheatNote = "Forfeited the point, you cheater. 👀 No leaving the game mid-round."; S = await api("match?id=" + matchId); lastKey = ""; render(); }
+  } catch {}
+});
 
 /* ---------- Name suggestions ---------- */
 // Pops up matching NBA names while typing, and forgives misspellings ("olajuwan" finds Olajuwon).

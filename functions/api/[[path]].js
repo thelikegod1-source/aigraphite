@@ -238,7 +238,11 @@ async function tickInner(env, id) {
       const res = await judge(env, m.prompts[r], a[1], a[2]);
       const fresh = await load(db, id);
       if (!fresh || fresh.m.j[r]) return fresh?.m;
-      const f = fresh.m;
+      const f = fresh.m, cheat = (f.cheat || {})[r] || {};
+      const ff = { valid: false, score: 0, why: "Forfeited: left the game mid-round." };
+      if (cheat[1]) res.a = ff;
+      if (cheat[2]) res.b = ff;
+      res.winner = res.a.score > res.b.score ? "a" : res.b.score > res.a.score ? "b" : "tie";
       f.j[r] = { ...res, t: Date.now() }; delete f.judging;
       if (res.winner === "a") f.s1++; else if (res.winner === "b") f.s2++;
       await save(db, id, f, fresh.v);
@@ -264,7 +268,7 @@ function viewGuess(m, slot) {
     const shown = g ? CLUES : Math.max(0, Math.min(CLUES, Math.floor((now - m.rs) / CLUE_MS) + 1));
     return { clues: P.clues.slice(0, i < r ? CLUES : shown), answer: g ? P.name : null,
       result: g ? (g.slot === 0 ? "none" : g.slot === slot ? "win" : "loss") : null, pts: g?.pts || 0,
-      wrong: (m.wrong[i] || {})[slot] || 0 };
+      wrong: (m.wrong[i] || {})[slot] || 0, forfeit: !!((m.cheat || {})[i] || {})[slot], theyForfeit: !!((m.cheat || {})[i] || {})[o] };
   });
   return { mode: "guess", slot, me: slot === 1 ? m.n1 : m.n2, them: slot === 1 ? m.n2 : m.n1,
     myScore: slot === 1 ? m.s1 : m.s2, theirScore: slot === 1 ? m.s2 : m.s1, practice: m.p2 === "bot",
@@ -278,7 +282,8 @@ function view(m, pid) {
   const o = slot === 1 ? 2 : 1, r = m.round;
   const rounds = m.prompts.map((p, i) => {
     const a = m.a[i] || {}, j = m.j[i];
-    return { prompt: i <= r ? p : null, mine: a[slot] ?? null, theirs: j ? a[o] ?? "" : null, theyAnswered: a[o] != null,
+    const ch = (m.cheat || {})[i] || {};
+    return { forfeit: !!ch[slot], theyForfeit: !!ch[o], prompt: i <= r ? p : null, mine: a[slot] ?? null, theirs: j ? a[o] ?? "" : null, theyAnswered: a[o] != null,
       verdict: j ? { me: slot === 1 ? j.a : j.b, them: slot === 1 ? j.b : j.a, result: j.winner === "tie" ? "tie" : (j.winner === "a") === (slot === 1) ? "win" : "loss" } : null };
   });
   return { mode: "deep", practice: m.p2 === "bot", slot, me: slot === 1 ? m.n1 : m.n2, them: slot === 1 ? m.n2 : m.n1, myScore: slot === 1 ? m.s1 : m.s2, theirScore: slot === 1 ? m.s2 : m.s1,
@@ -394,6 +399,28 @@ export async function onRequest({ request, env, params }) {
     return out ? json(out) : json({ error: "match not found" }, 404);
   }
 
+  // Anti-cheat: the page reports when a player left mid-round (another tab or app). That round is forfeited.
+  if (path === "forfeit") {
+    const id = clean(body.id, 20);
+    for (let i = 0; i < 3; i++) {
+      const row = await load(db, id);
+      if (!row) return json({ error: "match not found" }, 404);
+      const { m, v } = row, slot = m.p1 === pid ? 1 : m.p2 === pid ? 2 : 0;
+      if (!slot) return json({ error: "not your match" }, 403);
+      const r = m.round;
+      if (m.done || body.round !== r || now < m.rs) return json({ ok: false });
+      if (m.mode === "guess") { if (m.g[r]) return json({ ok: false }); }
+      else {
+        m.a[r] ||= {};
+        if (m.a[r][slot] != null) return json({ ok: false }); // already locked in before leaving
+        m.a[r][slot] = "";
+      }
+      m.cheat ||= {}; m.cheat[r] ||= {}; m.cheat[r][slot] = true;
+      if (await save(db, id, m, v)) return json({ ok: true, forfeited: true });
+    }
+    return json({ error: "busy, try again" }, 503);
+  }
+
   if (path === "guess") {
     const id = clean(body.id, 20);
     for (let i = 0; i < 3; i++) {
@@ -403,6 +430,7 @@ export async function onRequest({ request, env, params }) {
       if (!slot || m.mode !== "guess") return json({ error: "not your match" }, 403);
       const r = m.round, end = m.rs + CLUE_MS * CLUES;
       if (m.done || body.round !== r || m.g[r] || now < m.rs || now > end) return json({ error: "round closed" }, 409);
+      if (((m.cheat || {})[r] || {})[slot]) return json({ error: "You forfeited this round for leaving the game." }, 403);
       if (!isGuessRight(m.puzzles[r], body.text)) {
         m.wrong[r] ||= {}; m.wrong[r][slot] = (m.wrong[r][slot] || 0) + 1;
         if (await save(db, id, m, v)) return json({ correct: false }); else continue;
@@ -424,6 +452,7 @@ export async function onRequest({ request, env, params }) {
       const r = m.round;
       if (m.done || body.round !== r || now < m.rs || now > m.rs + SECS * 1000 + 1500) return json({ error: "round closed" }, 409);
       m.a[r] ||= {};
+      if (((m.cheat || {})[r] || {})[slot]) return json({ error: "You forfeited this round for leaving the game." }, 403);
       if (m.a[r][slot] != null) return json({ ok: true });
       m.a[r][slot] = clean(body.text, 60);
       if (await save(db, id, m, v)) return json({ ok: true });
