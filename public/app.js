@@ -287,25 +287,53 @@ function dist(a, b) { // edit distance, small strings only
   }
   return prev[n];
 }
+// Nicknames and sound-alike spellings people actually type.
+const NICK = {
+  "Giannis Antetokounmpo": ["yanis", "yannis", "jannis", "janis", "gianis", "greek freak"], "Luka Doncic": ["luca", "luka"],
+  "LeBron James": ["bron", "lebron", "king james"], "Kobe Bryant": ["koby", "kobi", "black mamba", "mamba"],
+  "Kevin Durant": ["kd"], "Anthony Davis": ["ad"], "Chris Paul": ["cp3"], "Shaquille O'Neal": ["shaq"],
+  "Carmelo Anthony": ["melo"], "Allen Iverson": ["ai", "the answer"], "Tracy McGrady": ["tmac", "t mac"],
+  "Kevin Garnett": ["kg"], "Shai Gilgeous-Alexander": ["sga", "shay"], "Victor Wembanyama": ["wemby"],
+  "Stephen Curry": ["steph", "chef curry"], "Nikola Jokic": ["joker", "yokic"], "Anthony Edwards": ["ant", "ant man"],
+  "Damian Lillard": ["dame", "dame time"], "Donovan Mitchell": ["spida"], "DeMarcus Cousins": ["boogie"],
+  "Paul George": ["pg13", "pg"], "Draymond Green": ["dray"], "Jimmy Butler": ["jimmy buckets"],
+  "Karl-Anthony Towns": ["kat"], "Kyrie Irving": ["uncle drew", "kyree", "kyri"], "James Harden": ["the beard"],
+  "Russell Westbrook": ["brodie", "russ"], "Joel Embiid": ["the process", "jojo"], "Michael Jordan": ["mj", "goat"],
+  "Magic Johnson": ["magic"], "Larry Bird": ["larry legend"], "Dwyane Wade": ["dwayne wade", "d wade", "flash"],
+  "Dirk Nowitzki": ["dirk"], "Hakeem Olajuwon": ["the dream", "akeem"], "Julius Erving": ["dr j"],
+  "Penny Hardaway": ["penny"], "Pete Maravich": ["pistol pete"], "Dikembe Mutombo": ["deke"],
+  "Alonzo Mourning": ["zo"], "Manu Ginobili": ["manu"], "Ja Morant": ["ja"], "Zion Williamson": ["zion"],
+  "Trae Young": ["ice trae"], "Jayson Tatum": ["jt"], "Jaylen Brown": ["jb"], "Klay Thompson": ["klay"],
+  "Kawhi Leonard": ["the klaw", "kawai"], "Derrick Rose": ["d rose"], "Vince Carter": ["vinsanity", "half man half amazing"],
+  "Gary Payton": ["the glove"], "Ron Artest": ["metta world peace", "metta"], "Charles Barkley": ["chuck", "sir charles"],
+};
+const NICKS = Object.entries(NICK).flatMap(([n, a]) => a.map(x => [nrm(x), n]));
+// Rough "sounds like" key: ph=f, c/ck=k, z=s, y=i, j=y at the start, no double letters.
+const snd = w => w.replace(/^gi(?=[aeiou])/, "y").replace(/^j/, "y").replace(/ph/g, "f").replace(/ck/g, "k").replace(/c/g, "k")
+  .replace(/z/g, "s").replace(/y/g, "i").replace(/(.)\1+/g, "$1");
 function suggest(q) {
   q = nrm(q); if (!NAMES || q.length < 2) return [];
+  const pinned = q.length < 2 ? [] : NICKS.filter(([a]) => a === q || (q.length >= 3 && (a.startsWith(q) || dist(q, a) <= 1)) || (a.length >= 4 && q.startsWith(a))).map(([, n]) => n);
   const qt = q.split(" "), last = qt[qt.length - 1], out = [];
   for (const x of NAMES) {
     let s = null;
     if (x.k.startsWith(q)) s = 0;
     else if (qt.every(t => x.w.some(w => w.startsWith(t)))) s = 1;
+    else if (qt.length > 1 && qt.every(t => x.w.some(w => w.startsWith(t) || dist(snd(t), snd(w).slice(0, snd(t).length)) <= 1))) s = 3;
     else if (x.k.includes(q)) s = 2;
     else if (last.length >= 3) {
       // Misspelling: compare the typed word to the same-length start of each name word.
       const tol = last.length >= 6 ? 2 : 1;
       let best = 9;
-      for (const w of x.w) best = Math.min(best, dist(last, w.slice(0, last.length)), dist(last, w));
-      const others = qt.slice(0, -1).every(t => x.w.some(w => w.startsWith(t) || dist(t, w.slice(0, t.length)) <= 1));
+      const ls = snd(last);
+      for (const w of x.w) best = Math.min(best, dist(last, w.slice(0, last.length)), dist(last, w), dist(ls, snd(w).slice(0, ls.length)));
+      const others = qt.slice(0, -1).every(t => x.w.some(w => w.startsWith(t) || dist(t, w.slice(0, t.length)) <= 1 || dist(snd(t), snd(w)) <= 1));
       if (best <= tol && others) s = 3 + best;
     }
     if (s !== null) out.push([s, x.n]);
   }
-  return out.sort((a, b) => a[0] - b[0] || a[1].length - b[1].length || a[1].localeCompare(b[1])).slice(0, 6).map(x => x[1]);
+  const ranked = out.sort((a, b) => a[0] - b[0] || a[1].length - b[1].length || a[1].localeCompare(b[1])).map(x => x[1]);
+  return [...new Set([...pinned, ...ranked])].slice(0, 6);
 }
 function autocomplete(inp) {
   const ul = inp.parentElement.querySelector(".sug"); if (!ul) return;
