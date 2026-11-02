@@ -214,6 +214,52 @@ input[type=text]:focus{box-shadow:0 0 0 4px rgba(255,178,56,.18)}
 .credit:hover{color:var(--fg);border-color:var(--amber);transform:translateY(-2px)}
 body{padding-bottom:calc(64px + env(safe-area-inset-bottom,0px))}
 @media (max-width:420px){.btns button{font-size:1.1rem;white-space:nowrap}}
+/* Bouncing ball logo */
+.ball{display:inline-block;position:relative;width:.62em;height:.62em;margin-right:.14em;vertical-align:.08em;border-radius:50%;
+  background:radial-gradient(circle at 32% 28%,#ffd08a,#f08a12 55%,#9c4d00);box-shadow:inset -.05em -.06em .1em rgba(0,0,0,.35);animation:hop 1.1s cubic-bezier(.5,0,.5,1) infinite}
+.ball::before{content:"";position:absolute;inset:0;border-radius:50%;
+  background:linear-gradient(90deg,transparent 47%,#3a1a00 47% 53%,transparent 53%),linear-gradient(0deg,transparent 47%,#3a1a00 47% 53%,transparent 53%);opacity:.75}
+.ball::after{content:"";position:absolute;inset:0;border-radius:50%;border:.045em solid transparent;border-left-color:#3a1a00;border-right-color:#3a1a00;transform:scaleX(.55);opacity:.75}
+@keyframes hop{0%,100%{transform:translateY(-.22em)}48%{transform:translateY(.04em) scale(1.08,.9)}52%{transform:translateY(.04em) scale(1.08,.9)}}
+
+/* Tap ripple */
+.ripple{position:absolute;border-radius:50%;background:rgba(255,255,255,.45);transform:scale(0);animation:rip .6s ease-out forwards;pointer-events:none;z-index:-1}
+@keyframes rip{to{transform:scale(1);opacity:0}}
+
+/* Sound toggle */
+.tabs .snd{flex:0 0 auto;padding:9px 14px;font-size:1.05rem}
+
+/* Shot-clock ring */
+.clock{position:relative}
+.clock::before{content:"";position:absolute;inset:-4px;border-radius:9px;padding:3px;
+  background:conic-gradient(currentColor calc(var(--p,0)*360deg),rgba(255,255,255,.07) 0);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude;transition:background .25s}
+
+/* Overlays: VS intro and round banners */
+.overlay{position:fixed;inset:0;z-index:60;display:grid;place-items:center;pointer-events:none}
+.vs-wrap{background:radial-gradient(circle,rgba(13,20,32,.75),rgba(13,20,32,.95));animation:fadeOut .4s 1.6s forwards}
+.vs{display:grid;justify-items:center;gap:.2em;font-family:var(--display);text-transform:uppercase;text-align:center;padding:0 16px}
+.vs span{font-size:clamp(2rem,9vw,4rem);line-height:1;max-width:90vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vs .vs-a{color:var(--fg);animation:inL .5s cubic-bezier(.2,1.3,.4,1) both}
+.vs .vs-b{color:var(--fg);animation:inR .5s .15s cubic-bezier(.2,1.3,.4,1) both}
+.vs b{font-weight:400;font-size:clamp(3rem,14vw,6rem);color:var(--amber);text-shadow:0 0 30px rgba(255,178,56,.7);animation:slamIn .45s .35s cubic-bezier(.2,1.6,.4,1) both}
+@keyframes inL{from{opacity:0;transform:translateX(-60vw) skewX(-12deg)}}
+@keyframes inR{from{opacity:0;transform:translateX(60vw) skewX(-12deg)}}
+@keyframes slamIn{from{opacity:0;transform:scale(3) rotate(-8deg)}}
+@keyframes fadeOut{to{opacity:0}}
+.banner{font-family:var(--display);text-transform:uppercase;font-size:clamp(2.6rem,12vw,5rem);color:var(--amber);
+  text-shadow:0 0 28px rgba(255,178,56,.6),0 4px 0 #6b3d00;padding:.1em .6em;background:linear-gradient(90deg,transparent,rgba(13,20,32,.92) 20% 80%,transparent);
+  animation:sweepIn .9s cubic-bezier(.2,.9,.3,1) forwards}
+@keyframes sweepIn{0%{opacity:0;transform:translateX(-40vw) skewX(-15deg)}25%,70%{opacity:1;transform:none}100%{opacity:0;transform:translateX(40vw) skewX(-15deg)}}
+
+/* End screen */
+.end{align-items:center;text-align:center}
+.trophy{font-size:4.2rem;line-height:1;animation:trophy .9s cubic-bezier(.2,1.6,.4,1) both;filter:drop-shadow(0 8px 20px rgba(255,178,56,.45))}
+.end.lost .trophy{filter:none}
+@keyframes trophy{from{opacity:0;transform:translateY(-40px) scale(.3) rotate(-25deg)}}
+.end.won{box-shadow:0 0 0 1px rgba(79,209,139,.5),0 0 50px -10px rgba(79,209,139,.5)}
+.end .btns{width:100%}
+
 #confetti{position:fixed;inset:0;pointer-events:none;z-index:50}
 
 @media (prefers-reduced-motion:reduce){
@@ -225,7 +271,7 @@ body{padding-bottom:calc(64px + env(safe-area-inset-bottom,0px))}
 <body>
 <div class="wrap">
   <header>
-    <h1>Deep<span> Ball</span></h1>
+    <h1><i class="ball" aria-hidden="true"></i>Deep<span> Ball</span></h1>
     <p class="tag">1v1 NBA knowledge games. Deep pulls win.</p>
   </header>
   <main id="app"></main>

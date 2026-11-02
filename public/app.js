@@ -31,10 +31,12 @@ const stop = () => { clearInterval(timer); timer = null; clearInterval(clockTime
 
 function nav(active) {
   const tab = (id, label) => `<button class="tab" data-go="${id}" ${active === id ? 'aria-current="page"' : ""}>${label}</button>`;
-  return `<nav class="tabs">${tab("home", "Play")}${tab("board", "Leaderboard")}${tab("profile", "Profile")}</nav>`;
+  return `<nav class="tabs">${tab("home", "Play")}${tab("board", "Ranks")}${tab("profile", "Profile")}<button class="tab snd" id="snd" aria-label="${muted ? "Turn sound on" : "Turn sound off"}" aria-pressed="${!muted}">${muted ? "🔇" : "🔊"}</button></nav>`;
 }
 function wireNav() {
   document.querySelectorAll("[data-go]").forEach(b => b.onclick = () => ({ home, board, profile })[b.dataset.go]());
+  const sb = $("#snd");
+  if (sb) sb.onclick = () => { muted = !muted; store.set("db_mute", muted ? "1" : "0"); sb.textContent = muted ? "🔇" : "🔊"; sb.setAttribute("aria-pressed", String(!muted)); if (!muted) SFX.roundWin(); };
 }
 
 /* ---------- Play ---------- */
@@ -141,7 +143,13 @@ function join(id) {
   const poll = async () => {
     try {
       const d = await api("match?id=" + id);
-      skew = d.now - Date.now(); S = d; render();
+      const first = !S;
+      skew = d.now - Date.now(); S = d;
+      if (first && !d.done && d.round === 0) {
+        overlay(`<div class="vs"><span class="vs-a">${esc(d.me)}</span><b>VS</b><span class="vs-b">${esc(d.them)}</span></div>`, 2000, "vs-wrap");
+        SFX.whistle(); buzz(40);
+      }
+      render();
       if (d.done) { clearInterval(timer); if (!d.practice && !rated) { rated = true; await refreshMe(); lastKey = ""; render(); } }
     } catch (e) { if (view === "match" && !S) home(e.message); }
   };
@@ -149,8 +157,20 @@ function join(id) {
   clockTimer = setInterval(clock, 250);
 }
 
+let lastTick = -1, lastStart = "";
+function ring(c, left) { c.style.setProperty("--p", Math.max(0, Math.min(1, left / S.secs)).toFixed(3)); }
 function clock() {
   const c = $("#clk"); if (!c || !S) return;
+  {
+    const now0 = Date.now() + skew, live = !S.done && now0 >= S.rs && now0 < S.rs + S.secs * 1000;
+    const left0 = Math.ceil((S.rs + S.secs * 1000 - now0) / 1000);
+    const k = S.round + ":" + S.rs;
+    if (live && lastStart !== k) { lastStart = k; SFX.whistle(); }
+    const R0 = S.rounds[S.round] || {};
+    const waiting = S.mode === "guess" ? !R0.result && !R0.forfeit : R0.mine == null;
+    if (live && waiting && left0 <= 5 && left0 !== lastTick) { lastTick = left0; SFX.tick(); }
+    ring(c, live ? (S.rs + S.secs * 1000 - now0) / 1000 : 0);
+  }
   const now = Date.now() + skew;
   if (view === "match" && lastKey.includes("ready") && now >= S.rs) { render(); return; }
   if (S.mode === "guess") {
@@ -188,13 +208,14 @@ function renderDone() {
   if (key === lastKey) return; lastKey = key;
   const won = S.myScore > S.theirScore, lost = S.myScore < S.theirScore;
   const t = won ? ["You win", "var(--win)"] : lost ? ["You lose", "var(--lose)"] : ["Draw", "var(--amber)"];
-  app.innerHTML = `${boardBar()}<div class="panel"><p class="big" style="color:${t[1]}">${t[0]}</p>
+  app.innerHTML = `${boardBar()}<div class="panel end ${won ? "won" : lost ? "lost" : ""}"><div class="trophy" aria-hidden="true">${won ? "🏆" : lost ? "😤" : "🤝"}</div><p class="big" style="color:${t[1]}">${t[0]}</p>
     <p class="status">${S.myScore} – ${S.theirScore}${S.mode === "guess" ? " points" : ""}</p>
     ${S.practice ? `<p class="status small">Practice match. Your Elo didn't change.</p>` : `<p class="status small">Your Elo is now <b>${me.elo}</b>${me.rank ? ` · rank #${me.rank}` : ""}</p>`}
     <div class="btns"><button id="share">Share result</button><button class="ghost" id="again">Play again</button></div>
     <div class="btns"><button class="ghost" id="home">Home</button></div></div>`;
   $("#share").onclick = shareCard;
   if (won) setTimeout(confetti, 250);
+  (won ? SFX.win : lost ? SFX.lose : SFX.roundWin)();
   $("#again").onclick = async () => { if (S.practice) { try { join((await api("practice", { mode: S.mode })).match); } catch (e) { home(e.message); } } else find(); };
   $("#home").onclick = () => home();
   clock();
@@ -230,7 +251,12 @@ function renderDeep() {
       ${R.theyAnswered ? `<p class="status">Opponent locked in.</p>` : ""}`;
   }
   const keep = $("#ans")?.value || "";
-  scene = ["deep", r, state].join("|");
+  const sc = ["deep", r, state].join("|");
+  if (sc !== lastScene) {
+    if (state === "ask" && r > 0) overlay(`<div class="banner">Round ${r + 1}</div>`, 900);
+    if (state === "verdict") (R.verdict.result === "win" ? SFX.roundWin : R.verdict.result === "loss" ? SFX.roundLoss : SFX.tick)();
+  }
+  scene = sc;
   app.innerHTML = `${boardBar()}<div class="panel">${dots()}${body}</div>`;
   const inp = $("#ans");
   if (inp) {
@@ -272,7 +298,14 @@ function renderGuess() {
       ${R.wrong ? `<p class="status bad">Nope${R.wrong > 1 ? ` ×${R.wrong}` : ""}. Keep guessing.</p>` : ""}`;
   }
   const keep = wasWrong ? "" : $("#ans")?.value || "";
-  scene = ["guess", r, state].join("|");
+  const sc = ["guess", r, state].join("|");
+  if (sc !== lastScene) {
+    if (state === "ask" && r > 0) overlay(`<div class="banner">Player ${r + 1}</div>`, 900);
+    if (state === "result") (R.result === "win" ? SFX.right : R.result === "loss" ? SFX.roundLoss : SFX.tick)();
+    if (state === "out") SFX.wrong();
+  }
+  if (wasWrong) SFX.wrong();
+  scene = sc;
   app.innerHTML = `${boardBar()}<div class="panel">${dots()}${body}</div>`;
   const inp = $("#ans");
   if (inp) {
@@ -316,6 +349,44 @@ function confetti() {
     if (++t < 150) requestAnimationFrame(frame); else c.remove();
   })();
 }
+
+/* ---------- Sound, haptics, overlays ---------- */
+let muted = store.get("db_mute") === "1", actx = null;
+function tone(freq, dur = .12, type = "sine", vol = .18, when = 0, slide = 0) {
+  if (muted) return;
+  try {
+    actx ||= new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === "suspended") actx.resume();
+    const t = actx.currentTime + when, o = actx.createOscillator(), g = actx.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t);
+    if (slide) o.frequency.exponentialRampToValueAtTime(freq * slide, t + dur);
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.0001, t + dur);
+    o.connect(g).connect(actx.destination); o.start(t); o.stop(t + dur + .02);
+  } catch {}
+}
+const buzz = ms => { try { if (!muted) navigator.vibrate?.(ms); } catch {} };
+const SFX = {
+  tap: () => tone(520, .05, "triangle", .08),
+  whistle: () => { tone(2200, .18, "sine", .12); tone(2300, .25, "sine", .1, .2); },
+  tick: () => tone(1000, .06, "square", .06),
+  right: () => { tone(660, .1, "triangle"); tone(990, .18, "triangle", .2, .1); buzz([30, 40, 30]); },
+  wrong: () => { tone(160, .22, "sawtooth", .12, 0, .7); buzz(120); },
+  roundWin: () => { tone(523, .1, "triangle"); tone(784, .2, "triangle", .2, .1); },
+  roundLoss: () => tone(300, .25, "triangle", .14, 0, .6),
+  win: () => { [523, 659, 784, 1047].forEach((f, i) => tone(f, .22, "triangle", .2, i * .11)); buzz([60, 50, 60, 50, 120]); },
+  lose: () => { [392, 330, 262].forEach((f, i) => tone(f, .3, "sine", .16, i * .16)); buzz(200); },
+};
+function overlay(html, ms = 1100, cls = "") {
+  const el = document.createElement("div"); el.className = "overlay " + cls; el.innerHTML = html;
+  document.body.appendChild(el); setTimeout(() => el.remove(), ms);
+}
+// Ripple on every tap (phones never see hover effects, so taps get the motion).
+document.addEventListener("pointerdown", e => {
+  const b = e.target.closest("button"); if (!b || b.disabled || b.classList.contains("link")) return;
+  const r = b.getBoundingClientRect(), d = Math.max(r.width, r.height) * 2.2, sp = document.createElement("span");
+  sp.className = "ripple"; sp.style.cssText = `width:${d}px;height:${d}px;left:${e.clientX - r.left - d / 2}px;top:${e.clientY - r.top - d / 2}px`;
+  b.appendChild(sp); setTimeout(() => sp.remove(), 650); SFX.tap();
+});
 
 /* ---------- Anti-cheat ---------- */
 // Leaving the game mid-round (switching tabs or apps) forfeits the round. Leaving for under 5 seconds is forgiven (accidents happen).
