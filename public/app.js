@@ -194,6 +194,7 @@ function renderDone() {
     <div class="btns"><button id="share">Share result</button><button class="ghost" id="again">Play again</button></div>
     <div class="btns"><button class="ghost" id="home">Home</button></div></div>`;
   $("#share").onclick = shareCard;
+  if (won) setTimeout(confetti, 250);
   $("#again").onclick = async () => { if (S.practice) { try { join((await api("practice", { mode: S.mode })).match); } catch (e) { home(e.message); } } else find(); };
   $("#home").onclick = () => home();
   clock();
@@ -229,6 +230,7 @@ function renderDeep() {
       ${R.theyAnswered ? `<p class="status">Opponent locked in.</p>` : ""}`;
   }
   const keep = $("#ans")?.value || "";
+  scene = ["deep", r, state].join("|");
   app.innerHTML = `${boardBar()}<div class="panel">${dots()}${body}</div>`;
   const inp = $("#ans");
   if (inp) {
@@ -258,6 +260,7 @@ function renderGuess() {
   else if (state === "out") body = `<span class="label">Player ${r + 1} of ${S.totalRounds}</span>${clueList}
       <p class="cheat">${esc(cheatNote || "Forfeited the point, you cheater. 👀")}</p><p class="status small">You're locked out of this player. Next one soon.</p>`;
   else if (state === "result") {
+    if (R.result === "win" && lastScene !== ["guess", r, "result"].join("|")) setTimeout(confetti, 100);
     const msg = R.result === "win" ? `You got it for <b>${R.pts}</b> point${R.pts > 1 ? "s" : ""}` : R.result === "loss" ? `${esc(S.them)} got it for ${R.pts}` : "Nobody got it";
     body = `<span class="label">Player ${r + 1} of ${S.totalRounds}</span><p class="prompt">${esc(R.answer)}</p>${clueList}
       <p class="status ${R.result === "win" ? "ok" : ""}">${msg} · next player soon</p>
@@ -269,6 +272,7 @@ function renderGuess() {
       ${R.wrong ? `<p class="status bad">Nope${R.wrong > 1 ? ` ×${R.wrong}` : ""}. Keep guessing.</p>` : ""}`;
   }
   const keep = wasWrong ? "" : $("#ans")?.value || "";
+  scene = ["guess", r, state].join("|");
   app.innerHTML = `${boardBar()}<div class="panel">${dots()}${body}</div>`;
   const inp = $("#ans");
   if (inp) {
@@ -283,6 +287,34 @@ function renderGuess() {
     };
   }
   clock();
+}
+
+/* ---------- Visual effects ---------- */
+// Renderers set `scene`; if a redraw is the same scene (a new clue, a timer tick) panels don't re-animate.
+let scene = null, lastScene = null, lastPts = [];
+new MutationObserver(() => {
+  const same = scene !== null && scene === lastScene;
+  lastScene = scene; scene = null;
+  if (same) app.querySelectorAll(":scope > *").forEach(el => el.classList.add("still"));
+  const pts = [...app.querySelectorAll(".pts")];
+  pts.forEach((el, i) => { if (lastPts[i] !== undefined && lastPts[i] !== el.textContent) { el.classList.remove("bump"); void el.offsetWidth; el.classList.add("bump"); } });
+  lastPts = pts.map(el => el.textContent);
+}).observe(app, { childList: true });
+
+function confetti() {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const c = document.createElement("canvas"); c.id = "confetti"; document.body.appendChild(c);
+  const x = c.getContext("2d"), W = c.width = innerWidth, H = c.height = innerHeight;
+  const colors = ["#ffb238", "#4fd18b", "#eef2f7", "#ff6b5e", "#7aa7ff"];
+  const P = Array.from({ length: 160 }, () => ({ x: W / 2 + (Math.random() - .5) * W * .3, y: H * .35, vx: (Math.random() - .5) * 16, vy: -Math.random() * 16 - 6,
+    s: 6 + Math.random() * 8, r: Math.random() * 6, vr: (Math.random() - .5) * .3, c: colors[Math.random() * colors.length | 0] }));
+  let t = 0;
+  (function frame() {
+    x.clearRect(0, 0, W, H);
+    for (const p of P) { p.vy += .45; p.vx *= .99; p.x += p.vx; p.y += p.vy; p.r += p.vr;
+      x.save(); x.translate(p.x, p.y); x.rotate(p.r); x.fillStyle = p.c; x.globalAlpha = Math.max(0, 1 - t / 150); x.fillRect(-p.s / 2, -p.s / 4, p.s, p.s / 2); x.restore(); }
+    if (++t < 150) requestAnimationFrame(frame); else c.remove();
+  })();
 }
 
 /* ---------- Anti-cheat ---------- */
@@ -380,7 +412,12 @@ function autocomplete(inp) {
     ul.hidden = !items.length; inp.setAttribute("aria-expanded", String(!!items.length));
     ul.querySelectorAll("li").forEach((li, i) => li.addEventListener("pointerdown", e => { e.preventDefault(); pick(items[i]); }));
   };
-  const update = async () => { if (!NAMES) await loadNames(); items = suggest(inp.value); active = -1; paint(); };
+  const update = async () => {
+    if (!NAMES) await loadNames();
+    items = suggest(inp.value);
+    if (items.length && nrm(items[0]) === nrm(inp.value)) items = []; // already typed exactly: get out of the way
+    active = -1; paint();
+  };
   inp.addEventListener("input", update);
   inp.addEventListener("keydown", e => {
     if (ul.hidden) return;
