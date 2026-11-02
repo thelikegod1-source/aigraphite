@@ -307,6 +307,27 @@ body{padding-bottom:calc(64px + env(safe-area-inset-bottom,0px))}
 .slot .pos{font-family:var(--mono);font-weight:700;font-size:.78rem;color:var(--amber);min-width:2.6em;text-align:center}
 .slot .sn .chip{font-size:.6rem;min-width:0;padding:1px 4px;margin-left:4px;vertical-align:.1em}
 .sug li small{margin-left:8px;font-family:var(--mono);font-size:.72rem;color:var(--muted)}
+/* Troll menu (owner only) */
+.troll-fab{position:fixed;left:max(12px,env(safe-area-inset-left,0px));bottom:calc(10px + env(safe-area-inset-bottom,0px));z-index:40;width:52px;height:52px;padding:0;border-radius:50%;
+  font-size:1.6rem;flex:none;background:#3a0d2e;border:2px solid #ff4fb4;box-shadow:0 0 20px rgba(255,79,180,.5)!important;animation:wiggle 2.4s ease-in-out infinite}
+@keyframes wiggle{0%,80%,100%{transform:rotate(0)}85%{transform:rotate(-14deg)}90%{transform:rotate(14deg)}95%{transform:rotate(-8deg)}}
+.troll-menu{position:fixed;inset:0;z-index:70;display:grid;place-items:end center;background:rgba(0,0,0,.55);padding:16px;animation:fadeUp .2s both}
+.tm-card{width:min(520px,100%);background:#1a0f22;border:1px solid #ff4fb4;border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:12px;box-shadow:0 0 40px rgba(255,79,180,.35)}
+.tm-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.tm{font-family:var(--body);text-transform:none;letter-spacing:0;font-size:.95rem;padding:10px;display:flex;gap:8px;align-items:center;text-align:left;border-color:#5a2a55!important}
+.tm span{font-size:1.3rem}
+.troll-flip body{transform:rotate(180deg);transition:transform .5s}
+.troll-spin body{animation:tspin 2s cubic-bezier(.4,0,.2,1)}
+@keyframes tspin{to{transform:rotate(720deg)}}
+.troll-shake body{animation:tshake .12s linear 15}
+@keyframes tshake{25%{transform:translate(-8px,4px) rotate(-1deg)}75%{transform:translate(8px,-4px) rotate(1deg)}}
+.troll-zoom body{transform:scale(2.4);transform-origin:50% 30%;transition:transform .4s}
+html body{transition:transform .5s}
+.brick{position:fixed;top:-40px;z-index:65;font-size:2rem;pointer-events:none;animation:fall linear forwards}
+@keyframes fall{to{transform:translateY(110vh) rotate(540deg)}}
+.troll-pop{background:rgba(0,0,0,.5)}
+.fake-alert{background:#fff;color:#111;border-radius:14px;padding:18px 20px;max-width:300px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.6);animation:pop .3s both}
+.fake-alert b{font-size:1.15rem;color:#d00}.fake-alert p{margin:8px 0}.fake-alert .small{color:#555}
 #confetti{position:fixed;inset:0;pointer-events:none;z-index:50}
 
 @media (prefers-reduced-motion:reduce){

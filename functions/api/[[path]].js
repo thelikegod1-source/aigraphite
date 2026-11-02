@@ -6,6 +6,13 @@ const CLUE_MS = 6000, CLUES = 5, REVEAL_MS = 6000; // Guess the Player timing
 import { PROMPTS as BANK } from "../../lib/prompts.js";
 import { PLAYERS, isGuessRight } from "../../lib/players.js";
 import { CODES } from "../../lib/franchises.js";
+// Troll menu: only the owner's account. Stored as a hash so the player code itself never appears in the repo.
+const ADMIN_HASH = "c5d19ba54785f16bbd733110040960a34f975394f2e0c219de6877279c3f077e";
+const TROLLS = ["flip", "shake", "rain", "airhorn", "popup", "brick", "spin", "fakewin", "zoom", "fart"];
+async function isAdmin(pid) {
+  const h = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(pid));
+  return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, "0")).join("") === ADMIN_HASH;
+}
 const DRAFT_ROUNDS = 6, DRAFT_SECS = 25, SPIN_MS = 4000, DRAFT_REVEAL_MS = 4500;
 import { lookup, randomAnswer, hasList } from "../../lib/answers.js";
 
@@ -372,6 +379,11 @@ function viewDraft(m, slot) {
 function view(m, pid) {
   const slot = m.p1 === pid ? 1 : m.p2 === pid ? 2 : 0;
   if (!slot) return null;
+  const v = viewMode(m, slot);
+  v.trolls = (m.troll || []).filter(t => t.to === slot && Date.now() - t.t < 15000).map(({ k, t }) => ({ k, t }));
+  return v;
+}
+function viewMode(m, slot) {
   if (m.mode === "guess") return viewGuess(m, slot);
   if (m.mode === "draft") return viewDraft(m, slot);
   const o = slot === 1 ? 2 : 1, r = m.round;
@@ -419,9 +431,10 @@ export async function onRequest({ request, env, params }) {
 
   if (path === "me") {
     const p = await db.prepare("SELECT name, elo, w, l, d, lname FROM players WHERE pid=?").bind(pid).first();
-    if (!p) return json({ name: null, elo: 1000, w: 0, l: 0, d: 0, rank: null });
+    const admin = await isAdmin(pid);
+    if (!p) return json({ name: null, elo: 1000, w: 0, l: 0, d: 0, rank: null, admin });
     const rank = (p.w + p.l + p.d) ? (await db.prepare("SELECT COUNT(*) AS n FROM players WHERE elo > ? AND w+l+d > 0").bind(p.elo).first()).n + 1 : null;
-    return json({ name: p.lname ? p.name : null, elo: p.elo, w: p.w, l: p.l, d: p.d, rank });
+    return json({ name: p.lname ? p.name : null, elo: p.elo, w: p.w, l: p.l, d: p.d, rank, admin });
   }
 
   if (path === "profile") {
@@ -528,6 +541,23 @@ export async function onRequest({ request, env, params }) {
       if (await save(db, id, m, v)) return json({ ok: true, forfeited: true });
     }
     return json({ error: "busy, try again" }, 503);
+  }
+
+  if (path === "troll") {
+    if (!(await isAdmin(pid))) return json({ error: "not found" }, 404);
+    const k = String(body.kind || ""), id = clean(body.id, 20);
+    if (!TROLLS.includes(k)) return json({ error: "unknown troll" }, 400);
+    for (let i = 0; i < 3; i++) {
+      const row = await load(db, id);
+      if (!row) return json({ error: "match not found" }, 404);
+      const { m, v } = row, slot = m.p1 === pid ? 1 : m.p2 === pid ? 2 : 0;
+      if (!slot) return json({ error: "not your match" }, 403);
+      m.troll = (m.troll || []).filter(t => now - t.t < 15000);
+      if (m.troll.some(t => now - t.t < 2500)) return json({ error: "Slow down, let the last one land 😈" }, 429);
+      m.troll.push({ to: slot === 1 ? 2 : 1, k, t: now });
+      if (await save(db, id, m, v)) return json({ ok: true });
+    }
+    return json({ error: "busy" }, 503);
   }
 
   if (path === "pick") {

@@ -146,7 +146,7 @@ function join(id) {
     try {
       const d = await api("match?id=" + id);
       const first = !S;
-      skew = d.now - Date.now(); S = d;
+      skew = d.now - Date.now(); S = d; applyTrolls(d.trolls);
       if (first && !d.done && d.round === 0) {
         overlay(`<div class="vs"><span class="vs-a">${esc(d.me)}</span><b>VS</b><span class="vs-b">${esc(d.them)}</span></div>`, 2000, "vs-wrap");
         SFX.whistle(); buzz(40);
@@ -203,7 +203,7 @@ function clock() {
 }
 
 function boardBar() {
-  return `<div class="board">
+  return `${trollButton()}<div class="board">
     <div class="side"><div class="label">You</div><div class="pname">${esc(S.me)}</div><div class="pts">${S.myScore}</div></div>
     <div class="clock calm" id="clk" role="timer" aria-label="Shot clock"><span class="sc-bar"><i></i></span><span class="sc-digits"></span><span class="sc-label">Shot clock</span></div>
     <div class="side r"><div class="label">Opponent</div><div class="pname">${esc(S.them)}</div><div class="pts">${S.theirScore}</div></div></div>`;
@@ -403,6 +403,55 @@ document.addEventListener("pointerdown", e => {
   sp.className = "ripple"; sp.style.cssText = `width:${d}px;height:${d}px;left:${e.clientX - r.left - d / 2}px;top:${e.clientY - r.top - d / 2}px`;
   b.appendChild(sp); setTimeout(() => sp.remove(), 650); SFX.tap();
 });
+
+/* ---------- Troll menu (owner only) ---------- */
+const TROLL_MENU = [["flip", "🙃", "Flip their screen"], ["shake", "📳", "Earthquake"], ["rain", "🧱", "Brick rain"], ["airhorn", "📯", "Air horn"],
+  ["popup", "⚠️", "Fake 'phone hacked' alert"], ["brick", "🧱", "Rename them 'Bricklayer'"], ["spin", "🌀", "Spin their screen"],
+  ["fakewin", "🎉", "Fake 'You win!' tease"], ["zoom", "🔍", "Zoom way in"], ["fart", "💨", "Fart sound"]];
+function trollButton() {
+  if (!me.admin || !S || S.done || S.practice && false) return "";
+  return `<button class="troll-fab" id="trollfab" aria-label="Troll menu">😈</button>`;
+}
+function openTrollMenu() {
+  const el = document.createElement("div"); el.className = "troll-menu"; el.setAttribute("role", "dialog"); el.setAttribute("aria-label", "Troll menu");
+  el.innerHTML = `<div class="tm-card"><div class="row between"><b>😈 Troll ${esc(S?.them || "")}</b><button class="link" id="tmx">Close</button></div>
+    <div class="tm-grid">${TROLL_MENU.map(([k, e, t]) => `<button class="ghost tm" data-k="${k}"><span>${e}</span>${esc(t)}</button>`).join("")}</div>
+    <p class="small" id="tmsg">Pranks last a few seconds. Scores aren't touched.</p></div>`;
+  document.body.appendChild(el);
+  el.onclick = e => { if (e.target === el) el.remove(); };
+  el.querySelector("#tmx").onclick = () => el.remove();
+  el.querySelectorAll(".tm").forEach(b => b.onclick = async () => {
+    const msg = el.querySelector("#tmsg");
+    try { await api("troll", { id: matchId, kind: b.dataset.k }); msg.textContent = `Sent ${b.textContent.trim()} 😈`; msg.className = "small ok"; }
+    catch (err) { msg.textContent = err.message; msg.className = "small bad"; }
+  });
+}
+document.addEventListener("click", e => { if (e.target.closest("#trollfab")) openTrollMenu(); });
+
+// Receiving end: play each prank once.
+const seenTrolls = new Set();
+function applyTrolls(list) {
+  for (const t of list || []) {
+    const id = t.k + t.t; if (seenTrolls.has(id)) continue; seenTrolls.add(id);
+    if (Date.now() + skew - t.t > 8000) continue; // too old, skip
+    runTroll(t.k);
+  }
+}
+function runTroll(k) {
+  const root = document.documentElement, calm = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const fx = (cls, ms) => { root.classList.add(cls); setTimeout(() => root.classList.remove(cls), ms); };
+  if (k === "flip") calm ? overlay(`<div class="banner">🙃 Upside down!</div>`, 1500) : fx("troll-flip", 3500);
+  if (k === "spin") calm ? overlay(`<div class="banner">🌀 Wheee</div>`, 1500) : fx("troll-spin", 2000);
+  if (k === "shake") calm ? overlay(`<div class="banner">📳 Earthquake!</div>`, 1500) : fx("troll-shake", 1800);
+  if (k === "zoom") fx("troll-zoom", 2500);
+  if (k === "rain") { for (let i = 0; i < 40; i++) setTimeout(() => { const b = document.createElement("span"); b.className = "brick"; b.textContent = "🧱"; b.style.left = Math.random() * 100 + "vw"; b.style.animationDuration = 1.2 + Math.random() + "s"; document.body.appendChild(b); setTimeout(() => b.remove(), 2600); }, i * 50); tone(180, .3, "sawtooth", .1, 0, .5); }
+  if (k === "airhorn") { for (let i = 0; i < 3; i++) { tone(440, .32, "sawtooth", .22, i * .38); tone(554, .32, "sawtooth", .16, i * .38); } overlay(`<div class="banner">📯📯📯</div>`, 1200); }
+  if (k === "fart") { tone(90, .5, "sawtooth", .25, 0, .6); tone(70, .35, "square", .12, .1, .7); overlay(`<div class="banner">💨</div>`, 900); }
+  if (k === "popup") overlay(`<div class="fake-alert"><b>⚠️ Warning</b><p>Your phone has been hacked by someone with more ball knowledge than you.</p><span class="small">jk 😈 keep playing</span></div>`, 3200, "troll-pop");
+  if (k === "fakewin") { confetti(); overlay(`<div class="banner">YOU WIN!!</div>`, 1300); setTimeout(() => overlay(`<div class="banner">…jk 😈</div>`, 1200), 1400); }
+  if (k === "brick") { document.querySelectorAll(".board .side:not(.r) .pname").forEach(el => { const o = el.textContent; el.textContent = "Bricklayer 🧱"; setTimeout(() => el.textContent = o, 4000); }); overlay(`<div class="banner">🧱 Bricklayer 🧱</div>`, 1200); }
+  buzz([40, 30, 40]);
+}
 
 /* ---------- Anti-cheat ---------- */
 // Leaving the game mid-round (switching tabs or apps) forfeits the round. Leaving for under 5 seconds is forgiven (accidents happen).
