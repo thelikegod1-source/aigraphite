@@ -48,6 +48,7 @@ function home(msg) {
   app.innerHTML = `${nav("home")}
   <div class="panel">
     <div class="row between"><span>Playing as <b>${esc(me.name)}</b></span><span class="mono small">${me.elo} Elo${me.rank ? ` · #${me.rank}` : ""}</span></div>
+    ${me.admin ? `<p class="troll-on">😈 Troll mode on · the button shows up during matches</p>` : ""}
     <p class="online" id="online"><i></i><span>${online ? `${online} online now` : "Checking who's online…"}</span></p>
     <div class="seg" role="group" aria-label="Game mode">
       <button data-mode="deep" aria-pressed="${mode === "deep"}">Deep Ball</button>
