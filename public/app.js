@@ -159,6 +159,16 @@ function join(id) {
 
 let lastTick = -1, lastStart = "";
 function ring(c, left) { c.style.setProperty("--p", Math.max(0, Math.min(1, left / S.secs)).toFixed(3)); }
+// Shot-clock digits drawn as real 7-segment LEDs (lit segments glow, unlit ones stay faint).
+const SEG = { a: "10,4 50,4 44,10 16,10", b: "52,6 52,46 46,42 46,12", c: "52,54 52,94 46,88 46,58", d: "10,96 50,96 44,90 16,90",
+  e: "8,54 14,58 14,88 8,94", f: "8,6 14,12 14,42 8,46", g: "10,50 16,46 44,46 50,50 44,54 16,54" };
+const DIGIT = { 0: "abcdef", 1: "bc", 2: "abged", 3: "abgcd", 4: "fgbc", 5: "afgcd", 6: "afgedc", 7: "abc", 8: "abcdefg", 9: "abcdfg", "-": "g" };
+function setLED(c, str) {
+  const box = c.querySelector(".sc-digits"); if (!box || box.dataset.v === str) return;
+  box.dataset.v = str; c.setAttribute("aria-label", "Shot clock " + (str === "--" ? "off" : str));
+  box.innerHTML = [...str].map(ch => `<svg viewBox="0 0 60 100" aria-hidden="true">${Object.entries(SEG).map(([k, pts]) =>
+    `<polygon points="${pts}" class="${(DIGIT[ch] || "").includes(k) ? "on" : ""}"/>`).join("")}</svg>`).join("");
+}
 function clock() {
   const c = $("#clk"); if (!c || !S) return;
   {
@@ -179,20 +189,21 @@ function clock() {
       const n = Math.min(5, Math.floor((now - S.rs) / S.clueMs) + 1);
       if (R && n > R.clues.length) return; // wait for the next poll to bring the clue
       const left = Math.max(0, Math.ceil((S.rs + S.secs * 1000 - now) / 1000));
-      c.textContent = String(left).padStart(2, "0"); c.classList.toggle("calm", left > 10); return;
+      setLED(c, String(left).padStart(2, " ")); c.classList.toggle("calm", left > 10); return;
     }
-    c.textContent = "–"; c.classList.add("calm"); return;
+    setLED(c, "--"); c.classList.add("calm"); return;
   }
   const pre = now < S.rs;
   const left = Math.max(0, Math.ceil((S.rs + S.secs * 1000 - now) / 1000));
-  c.textContent = pre || S.done ? "–" : String(left).padStart(2, "0");
+  setLED(c, pre || S.done ? "--" : String(left).padStart(2, " "));
+  c.classList.toggle("zero", !pre && !S.done && left === 0);
   c.classList.toggle("calm", pre || left > 10);
 }
 
 function boardBar() {
   return `<div class="board">
     <div class="side"><div class="label">You</div><div class="pname">${esc(S.me)}</div><div class="pts">${S.myScore}</div></div>
-    <div class="clock calm" id="clk">–</div>
+    <div class="clock calm" id="clk" role="timer" aria-label="Shot clock"><span class="sc-bar"><i></i></span><span class="sc-digits"></span><span class="sc-label">Shot clock</span></div>
     <div class="side r"><div class="label">Opponent</div><div class="pname">${esc(S.them)}</div><div class="pts">${S.theirScore}</div></div></div>`;
 }
 const dots = () => `<div class="dots">${Array.from({ length: S.totalRounds }, (_, i) => `<i class="${i <= S.round ? "on" : ""}"></i>`).join("")}</div>`;
