@@ -10,7 +10,7 @@ let me = { name: store.get("db_name") || null, elo: 1000, w: 0, l: 0, d: 0, rank
 
 const MODES = {
   deep: { name: "Deep Ball", how: ["Same prompt for both players. 30 seconds to answer.", "Correct answers score 1–10. Forgotten deep cuts score high, famous or recent picks score low.", "Wrong or blank answers score 0. First to 3 rounds wins."] },
-  draft: { name: "Spin & Draft", how: ["Spin the wheel to land on a random NBA team, then draft anyone who ever played for them. 25 seconds per pick.", "Each player spins their own wheel, so luck matters. Six spins build a 6-man roster.", "Every player is rated on his best season with that team. The better roster usually wins the best-of-7 series, but upsets happen."] },
+  draft: { name: "Spin & Draft", how: ["Spin the wheel to land on a random NBA team, then draft anyone who ever played for them. 25 seconds per pick.", "Build a real lineup: a PG, SG, SF, PF and C, plus a 6th man who can play anything. Two of the same position only works if one is your 6th man.", "Each player spins their own wheel, so luck matters.", "Every player is rated on his best season with that team. The better roster usually wins the best-of-7 series, but upsets happen."] },
   guess: { name: "Guess the Player", how: ["You start with the position and years played. Then a clue drops every 6 seconds, from hardest to easiest.", "First to name the player takes the round. Guess on clue 1 for 5 points, clue 5 for 1.", "Wrong guesses cost nothing, so keep firing. Most points after 5 players wins."] },
 };
 
@@ -491,13 +491,13 @@ function suggest(q, pool = NAMES) {
   const inPool = pool === NAMES ? pinned : pinned.filter(n => pool.some(x => x.n === n));
   return [...new Set([...inPool, ...ranked])].slice(0, 6);
 }
-function autocomplete(inp, pool) {
+function autocomplete(inp, pool, label) {
   const ul = inp.parentElement.querySelector(".sug"); if (!ul) return;
   let items = [], active = -1;
   const close = () => { ul.hidden = true; inp.setAttribute("aria-expanded", "false"); active = -1; };
   const pick = name => { inp.value = name; close(); inp.focus(); };
   const paint = () => {
-    ul.innerHTML = items.map((n, i) => `<li role="option" id="sug${i}" aria-selected="${i === active}">${esc(n)}</li>`).join("");
+    ul.innerHTML = items.map((n, i) => `<li role="option" id="sug${i}" aria-selected="${i === active}">${label ? label(n) : esc(n)}</li>`).join("");
     ul.hidden = !items.length; inp.setAttribute("aria-expanded", String(!!items.length));
     ul.querySelectorAll("li").forEach((li, i) => li.addEventListener("pointerdown", e => { e.preventDefault(); pick(items[i]); }));
   };
@@ -549,13 +549,15 @@ function spinWheel(code, ms) {
     setTimeout(() => { SFX.roundWin(); buzz(30); }, ms);
   }));
 }
-function rosterList(picks, title, hide) {
-  return `<div class="roster"><span class="label">${esc(title)}</span>${Array.from({ length: S.totalRounds }, (_, i) => {
-    const p = picks[i];
-    if (!p) return `<div class="slot empty"><span class="num">${i + 1}</span><span class="sn">—</span></div>`;
-    if (hide && !p.shown) return `<div class="slot">${chip(p.team)}<span class="sn muted">Picked</span></div>`;
-    return `<div class="slot">${chip(p.team)}<span class="sn">${p.n ? esc(p.n) : "<em>No pick</em>"}</span><span class="rt">${p.r ? p.r.toFixed(1) : "0"}</span></div>`;
-  }).join("")}</div>`;
+const SLOTS = ["PG", "SG", "SF", "PF", "C", "6th"];
+function rosterList(picks, title) {
+  const by = Object.fromEntries(picks.filter(p => p?.at).map(p => [p.at, p]));
+  const misses = picks.filter(p => p && !p.at).length;
+  return `<div class="roster"><span class="label">${esc(title)}</span>${SLOTS.map(sl => {
+    const p = by[sl];
+    if (!p) return `<div class="slot empty"><span class="pos">${sl}</span><span class="sn">—</span></div>`;
+    return `<div class="slot"><span class="pos">${sl}</span><span class="sn">${esc(p.n)} ${chip(p.team)}</span><span class="rt">${p.r.toFixed(1)}</span></div>`;
+  }).join("")}${misses ? `<p class="small bad">${misses} missed pick${misses > 1 ? "s" : ""}</p>` : ""}</div>`;
 }
 function renderDraft() {
   const r = S.round, R = S.rounds[r], now = Date.now() + skew;
@@ -573,15 +575,17 @@ function renderDraft() {
     const t = FR[R.myTeam] || {};
     const banner = `<div class="landed" style="--c1:${t.c1};--c2:${t.c2}"><span class="label">You landed</span><b>${esc(teamName(R.myTeam))}</b>
       <span class="small">${R.theirTeam ? `${esc(S.them)} got ${esc(teamName(R.theirTeam))}` : ""}</span></div>`;
+    const need = (R.need || []).map(x => `<span class="needpos">${x === "6th" ? "6th man (any)" : x}</span>`).join("");
     if (state === "pick") body = `<span class="label">Pick ${r + 1} of ${S.totalRounds}</span>${banner}
+      <div class="need"><span class="label">You still need</span>${need}</div>
       <form id="f" class="btns" autocomplete="off"><div class="ac"><input type="text" id="ans" maxlength="40" placeholder="Anyone who ever played for them" aria-label="Your pick" role="combobox" aria-autocomplete="list" aria-controls="sug" aria-expanded="false" autocapitalize="words" spellcheck="false"><ul class="sug" id="sug" role="listbox" hidden></ul></div><button>Draft</button></form>
       <p class="status small" id="perr"></p>`;
     else if (state === "wait") body = `<span class="label">Pick ${r + 1} of ${S.totalRounds}</span>${banner}
-      <div class="pick">${chip(R.myTeam)}<div><b>${esc(R.mine.n || "No pick")}</b><span>${esc(R.mine.s || "")}</span></div><em>${(R.mine.r || 0).toFixed(1)}</em></div>
+      <div class="pick">${chip(R.myTeam)}<div><b>${esc(R.mine.n || "No pick")}${R.mine.at ? ` <span class="needpos">${R.mine.at}</span>` : ""}</b><span>${esc(R.mine.s || "")}</span></div><em>${(R.mine.r || 0).toFixed(1)}</em></div>
       <p class="status pulse">${R.theyPicked ? "Both picked…" : `Waiting on ${esc(S.them)}…`}</p>`;
     else body = `<span class="label">Pick ${r + 1} of ${S.totalRounds} · results</span>
       <div class="ans">${[["You", R.mine, R.myTeam], [S.them, R.theirs, R.theirTeam]].map(([who, p, tm]) => `<div class="card ${p && R.mine && R.theirs && p.r >= Math.max(R.mine.r, R.theirs.r) && p.r > 0 ? "w" : ""}"><span class="label">${esc(who)} · ${esc(teamName(tm))}</span>
-        <span class="a">${p?.n ? esc(p.n) : "<em>No pick</em>"}</span><span class="score ok">${(p?.r || 0).toFixed(1)} rating</span><span class="why">${esc(p?.s || "")}${p?.y ? ` · with them ${esc(p.y)}` : ""}</span></div>`).join("")}</div>`;
+        <span class="a">${p?.n ? esc(p.n) : "<em>No pick</em>"}${p?.at ? ` <span class="needpos">${p.at}</span>` : ""}</span><span class="score ok">${(p?.r || 0).toFixed(1)} rating</span><span class="why">${esc(p?.s || "")}${p?.y ? ` · with them ${esc(p.y)}` : ""}</span></div>`).join("")}</div>`;
   }
   const keep = $("#ans")?.value || "";
   const sc = ["draft", r, state].join("|");
@@ -597,7 +601,11 @@ function renderDraft() {
   const inp = $("#ans");
   if (inp) {
     inp.value = keep; inp.focus({ preventScroll: true });
-    roster(R.myTeam).then(list => autocomplete(inp, list));
+    roster(R.myTeam).then(list => {
+      const open = R.need || [];
+      const fits = p => (p.p || []).some(x => open.includes(x)) || open.includes("6th");
+      autocomplete(inp, list.filter(fits), n => { const p = list.find(x => x.n === n); return p ? `${esc(p.n)}<small>${p.p.join("/")}</small>` : esc(n); });
+    });
     $("#f").onsubmit = async e => {
       e.preventDefault(); const text = inp.value.trim(); if (!text) return;
       try { await api("pick", { id: matchId, round: r, text }); S = await api("match?id=" + matchId); lastKey = ""; render(); }

@@ -75,12 +75,21 @@ function findOnTeam(list, text) {
   const last = list.filter(p => normName(p.n).split(" ").pop() === q);
   return last.length === 1 ? last[0] : null;
 }
+// Lineup: one of each position, plus a 6th man who can play anything.
+const SLOTS = ["PG", "SG", "SF", "PF", "C", "6th"];
+function usedSlots(m, slot) { return Object.values(m.pk).map(x => x[slot]?.at).filter(Boolean); }
+function slotFor(m, slot, p) {
+  const used = usedSlots(m, slot);
+  return (p.p || []).find(x => !used.includes(x)) || (used.includes("6th") ? null : "6th");
+}
+function openSlots(m, slot) { const used = usedSlots(m, slot); return SLOTS.filter(x => !used.includes(x)); }
+
 // Best-of-7 between two roster ratings. Better roster wins each game more often, but upsets happen.
 function series(a, b) {
   const pA = 1 / (1 + Math.exp(-(a - b) / 18));
   let w1 = 0, w2 = 0; const games = [];
   while (w1 < 4 && w2 < 4) { const x = Math.random() < pA; x ? w1++ : w2++; games.push(x ? 1 : 2); }
-  return { w1, w2, games, pA: Math.round(pA * 100) };
+  return { w1, w2, games, pA: Math.min(99, Math.max(1, Math.round(pA * 100))) };
 }
 
 let lastAiError = "";
@@ -250,8 +259,9 @@ async function tickDraft(env, id) {
     if (m.p2 === "bot" && pk[2] == null && now > m.rs + (m.botDelay ?? 7000)) {
       // The bot drafts someone decent but rarely the franchise's very best.
       const list = await team(m.spins[r][2]), mine = Object.values(m.pk).map(x => x[2]?.n);
-      const pool = list.slice(2, 40).filter(p => !mine.includes(p.n));
-      pk[2] = pool[Math.floor(Math.random() * pool.length)] || list[0]; m.botDelay = 5000 + Math.floor(Math.random() * 12000);
+      const pool = list.slice(2, 60).filter(p => !mine.includes(p.n) && slotFor(m, 2, p));
+      const choice = pool[Math.floor(Math.random() * pool.length)] || list.find(p => !mine.includes(p.n) && slotFor(m, 2, p));
+      pk[2] = choice ? { ...choice, at: slotFor(m, 2, choice) } : { n: "", r: 0, s: "No pick", y: "" }; m.botDelay = 5000 + Math.floor(Math.random() * 12000);
       if (await save(db, id, m, v)) continue; else continue;
     }
     if (now > end + 1500) { let ch = false; for (const sl of [1, 2]) if (pk[sl] == null) { pk[sl] = { n: "", r: 0, s: "No pick", y: "" }; ch = true; } if (ch) { if (await save(db, id, m, v)) continue; else continue; } }
@@ -347,7 +357,7 @@ function viewDraft(m, slot) {
   const o = slot === 1 ? 2 : 1, r = m.round, now = Date.now();
   const rounds = m.spins.map((sp, i) => {
     const pk = m.pk[i] || {}, over = !!pk.done;
-    return i > r ? {} : { myTeam: sp[slot], theirTeam: (i < r || now >= m.rs || over) ? sp[o] : null, mine: pk[slot] || null,
+    return i > r ? {} : { need: i === r ? openSlots(m, slot) : null, myTeam: sp[slot], theirTeam: (i < r || now >= m.rs || over) ? sp[o] : null, mine: pk[slot] || null,
       theirs: over ? pk[o] : null, theyPicked: pk[o] != null, over };
   });
   const sum = sl => Math.round(Object.values(m.pk).filter(x => x.done).reduce((a, x) => a + (x[sl]?.r || 0), 0) * 10) / 10;
@@ -535,8 +545,10 @@ export async function onRequest({ request, env, params }) {
       if (((m.cheat || {})[r] || {})[slot]) return json({ error: "You forfeited this pick for leaving the game." }, 403);
       if (!p) return json({ error: "That player never played for this team (or check the spelling)." }, 400);
       if (Object.values(m.pk).some(x => x[slot]?.n === p.n)) return json({ error: `${p.n} is already on your roster.` }, 400);
-      m.pk[r][slot] = p;
-      if (await save(db, id, m, v)) return json({ ok: true, player: p });
+      const at = slotFor(m, slot, p);
+      if (!at) return json({ error: `${p.n} plays ${p.p.join("/")}, and those spots and your 6th man are full. You still need: ${openSlots(m, slot).join(", ")}.` }, 400);
+      m.pk[r][slot] = { ...p, at };
+      if (await save(db, id, m, v)) return json({ ok: true, player: m.pk[r][slot] });
     }
     return json({ error: "busy, try again" }, 503);
   }

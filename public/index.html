@@ -287,8 +287,7 @@ body{padding-bottom:calc(64px + env(safe-area-inset-bottom,0px))}
 .landed b{font-family:var(--display);font-weight:400;font-size:clamp(1.8rem,8vw,2.6rem);text-transform:uppercase;line-height:1;color:#fff;text-shadow:0 2px 0 rgba(0,0,0,.4)}
 .landed .label,.landed .small{color:rgba(255,255,255,.85)}
 .chip{display:inline-grid;place-items:center;min-width:3.1em;padding:3px 5px;border-radius:5px;font-family:var(--mono);font-size:.72rem;font-weight:700;
-  background:var(--c1);color:var(--c2);border:1px solid color-mix(in srgb,var(--c2) 50%,transparent)}
-.chip[style*="--c2:#111111"]{color:#fff}
+  background:var(--c1);color:#fff;border:1px solid var(--c2);text-shadow:0 1px 1px rgba(0,0,0,.5)}
 .pick{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px;padding:12px;border:1px solid var(--amber);border-radius:8px;animation:pop .4s both}
 .pick b{display:block;font-size:1.15rem}.pick span{font-size:.85rem;color:var(--muted)}.pick em{font-style:normal;font-family:var(--mono);font-weight:700;color:var(--amber);font-size:1.3rem}
 .rosters{display:grid;grid-template-columns:1fr 1fr;gap:12px}
@@ -302,6 +301,12 @@ body{padding-bottom:calc(64px + env(safe-area-inset-bottom,0px))}
 .games span{font-family:var(--mono);font-size:.8rem;padding:5px 8px;border-radius:5px;animation:pop .3s both}
 .games span.w{background:rgba(79,209,139,.18);color:var(--win);border:1px solid var(--win)}
 .games span.l{background:rgba(255,107,94,.12);color:var(--lose);border:1px solid var(--lose)}
+.need{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.need .label{width:100%}
+.needpos{display:inline-block;font-family:var(--mono);font-size:.75rem;font-weight:700;padding:3px 7px;border-radius:5px;background:rgba(255,178,56,.14);color:var(--amber);border:1px solid rgba(255,178,56,.4);vertical-align:.15em}
+.slot .pos{font-family:var(--mono);font-weight:700;font-size:.78rem;color:var(--amber);min-width:2.6em;text-align:center}
+.slot .sn .chip{font-size:.6rem;min-width:0;padding:1px 4px;margin-left:4px;vertical-align:.1em}
+.sug li small{margin-left:8px;font-family:var(--mono);font-size:.72rem;color:var(--muted)}
 #confetti{position:fixed;inset:0;pointer-events:none;z-index:50}
 
 @media (prefers-reduced-motion:reduce){

@@ -1,7 +1,38 @@
 # Builds public/teams/<CODE>.json from aggregated box scores (agg.json).
 # Each entry: n=name, r=rating (best season with that franchise), s=stat line, y=years with the team.
-import json, sys, collections
+import json, sys, collections, csv
 d = json.load(open(sys.argv[1]))
+# Listed positions + heights (common_player_info.csv): id -> ("Guard-Forward", inches)
+INFO = {}
+if len(sys.argv) > 3:
+    for row in csv.DictReader(open(sys.argv[3])):
+        h = row.get('height (ft"in)', "") or ""
+        try: ft, inch = h.split('"'); inches = int(ft) * 12 + int(inch or 0)
+        except Exception: inches = 0
+        INFO[row["PlayerID"]] = (row.get("position", "") or "", inches)
+
+def positions(pid, p, r, a):
+    """Main position first, then the other spots he can fill. Guards fit PG/SG, forwards SF/PF, centers C."""
+    pos, h = INFO.get(pid, ("", 0))
+    parts = set(x.strip() for x in pos.split("-") if x.strip())
+    ratio = a / p if p else 0
+    def guard():  # a point guard runs the offense: lots of assists for how much he scores
+        return "PG" if a >= 9 or (a >= 6 and ratio >= .3) or (h and h <= 74 and a >= 3) or (h and h <= 75 and a >= 4 and ratio >= .28) else "SG"
+    def forward():
+        return "PF" if r >= 8 and a < 5 or (h and h >= 81 and a < 5) or (r >= 6.5 and a < 4 and (not h or h >= 80)) else "SF"
+    if not parts:  # no listing: judge from the stat line
+        parts = {"Center"} if r >= 9 and a < 3 else {"Guard"} if a >= 4.5 or (a >= 2.5 and r < 6) else {"Forward"} if r >= 5.5 else {"Guard"}
+    if parts == {"Guard"}: g = guard(); return [g, "SG" if g == "PG" else "PG"]
+    if parts == {"Forward"}: f = forward(); return [f, "PF" if f == "SF" else "SF"]
+    if parts == {"Center"}: return ["C"]
+    if parts == {"Guard", "Forward"}:
+        main = guard() if (h and h <= 78) or a >= 8 or not h else "SF"
+        return list(dict.fromkeys([main, "SG", "SF"] + (["PG"] if main == "PG" else [])))
+    if parts == {"Forward", "Center"}:
+        main = "C" if r >= 10 or (h and h >= 83) else "PF"
+        return list(dict.fromkeys([main, "PF", "C"]))
+    return ["SF", "PF"]
+
 FR = {"Atlanta Hawks":"ATL","Milwaukee Hawks":"ATL","St. Louis Hawks":"ATL","Tri-Cities Blackhawks":"ATL","Boston Celtics":"BOS",
  "Brooklyn Nets":"BKN","New Jersey Nets":"BKN","New York Nets":"BKN","Charlotte Bobcats":"CHA","Charlotte Hornets":"CHA",
  "Chicago Bulls":"CHI","Cleveland Cavaliers":"CLE","Dallas Mavericks":"DAL","Denver Nuggets":"DEN","Detroit Pistons":"DET",
@@ -37,11 +68,13 @@ for (fr, pid), seasons in by.items():
     rating = round(max(0, sc) + min(games, 800) / 160, 1)
     yrs = sorted(s[0] for s in seasons)
     yr = f"{yrs[0]-1}–{str(yrs[-1])[-2:]}" if yrs[0] != yrs[-1] else f"{yrs[0]-1}–{str(yrs[0])[-2:]}"
-    out[fr].append({"n": d["names"][pid], "r": rating, "s": f"{p:.1f} pts · {r:.1f} reb · {a:.1f} ast ({best[0]-1}-{str(best[0])[-2:]})", "y": yr})
+    pos = positions(pid, p, r, a)
+    out[fr].append({"n": d["names"][pid], "p": pos, "r": rating, "s": f"{p:.1f} pts · {r:.1f} reb · {a:.1f} ast ({best[0]-1}-{str(best[0])[-2:]})", "y": yr})
 import os
 os.makedirs(sys.argv[2], exist_ok=True)
 for fr, lst in out.items():
     lst.sort(key=lambda x: -x["r"])
     json.dump(lst, open(f"{sys.argv[2]}/{fr}.json", "w"), separators=(",", ":"))
 print({k: len(v) for k, v in sorted(out.items())})
-for fr in ["LAL", "CHI", "SAC", "OKC"]: print(fr, [(x["n"], x["r"]) for x in out[fr][:6]], "...", [(x["n"], x["r"]) for x in out[fr][100:103]])
+for fr in ["LAL", "CHI", "GSW"]: print(fr, [(x["n"], "/".join(x["p"])) for x in out[fr][:12]])
+allp = [x for v in out.values() for x in v]; print("primary counts", collections.Counter(x["p"][0] for x in allp), "listed:", sum(1 for v in by for _ in [0]) )
