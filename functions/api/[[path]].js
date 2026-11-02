@@ -5,6 +5,8 @@ const ROUNDS = 5, WIN = 3, SECS = 30;
 const CLUE_MS = 6000, CLUES = 5, REVEAL_MS = 6000; // Guess the Player timing
 import { PROMPTS as BANK } from "../../lib/prompts.js";
 import { PLAYERS, isGuessRight } from "../../lib/players.js";
+import { CODES } from "../../lib/franchises.js";
+const DRAFT_ROUNDS = 6, DRAFT_SECS = 25, SPIN_MS = 4000, DRAFT_REVEAL_MS = 4500;
 import { lookup, randomAnswer, hasList } from "../../lib/answers.js";
 
 const json = (d, s = 200) => new Response(JSON.stringify(d), { status: s, headers: { "content-type": "application/json" } });
@@ -30,6 +32,10 @@ async function schema(db) {
 
 function newMatch(p1, n1, p2, n2, mode = "deep") {
   const base = { mode, p1, n1, p2, n2, round: 0, rs: Date.now() + 3000, s1: 0, s2: 0, done: false };
+  if (mode === "draft") {
+    const spin = () => CODES[Math.floor(Math.random() * CODES.length)];
+    return { ...base, rs: Date.now() + SPIN_MS + 2500, spins: Array.from({ length: DRAFT_ROUNDS }, () => ({ 1: spin(), 2: spin() })), pk: {} };
+  }
   if (mode === "guess") {
     // Every match mixes eras: 3 players who debuted 2008 or later, 2 from before.
     const idx = PLAYERS.map((_, i) => i), modern = shuffle(idx.filter(i => PLAYERS[i].y >= 2008)), old = shuffle(idx.filter(i => PLAYERS[i].y < 2008));
@@ -37,7 +43,7 @@ function newMatch(p1, n1, p2, n2, mode = "deep") {
   }
   return { ...base, prompts: shuffle(BANK).slice(0, ROUNDS), a: {}, j: {} };
 }
-const MODES = ["deep", "guess"];
+const MODES = ["deep", "guess", "draft"];
 const pickMode = m => MODES.includes(m) ? m : "deep";
 async function createMatch(db, m) {
   const id = rid();
@@ -52,6 +58,29 @@ async function load(db, id) {
 async function save(db, id, m, v) {
   const r = await db.prepare("UPDATE matches SET data=?, v=v+1, t=? WHERE id=? AND v=?").bind(JSON.stringify(m), Date.now(), id, v).run();
   return r.meta.changes === 1;
+}
+
+// Team rosters live as static files (public/teams/XXX.json); load them through the site's own assets.
+let ORIGIN = "", ASSETS = null;
+const teamCache = {};
+async function team(code) {
+  if (teamCache[code]) return teamCache[code];
+  const r = await ASSETS.fetch(new Request(new URL(`/teams/${code}.json`, ORIGIN)));
+  return (teamCache[code] = await r.json());
+}
+const normName = s => String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+function findOnTeam(list, text) {
+  const q = normName(text); if (!q) return null;
+  const exact = list.find(p => normName(p.n) === q); if (exact) return exact;
+  const last = list.filter(p => normName(p.n).split(" ").pop() === q);
+  return last.length === 1 ? last[0] : null;
+}
+// Best-of-7 between two roster ratings. Better roster wins each game more often, but upsets happen.
+function series(a, b) {
+  const pA = 1 / (1 + Math.exp(-(a - b) / 18));
+  let w1 = 0, w2 = 0; const games = [];
+  while (w1 < 4 && w2 < 4) { const x = Math.random() < pA; x ? w1++ : w2++; games.push(x ? 1 : 2); }
+  return { w1, w2, games, pA: Math.round(pA * 100) };
 }
 
 let lastAiError = "";
@@ -210,12 +239,46 @@ async function tickGuess(env, id) {
   return (await load(db, id))?.m;
 }
 
+async function tickDraft(env, id) {
+  const db = env.DB;
+  for (let tries = 0; tries < 3; tries++) {
+    const row = await load(db, id);
+    if (!row) return null;
+    const { m, v } = row, r = m.round, now = Date.now(), end = m.rs + DRAFT_SECS * 1000;
+    if (m.done || now < m.rs) return m;
+    const pk = (m.pk[r] ||= {});
+    if (m.p2 === "bot" && pk[2] == null && now > m.rs + (m.botDelay ?? 7000)) {
+      // The bot drafts someone decent but rarely the franchise's very best.
+      const list = await team(m.spins[r][2]), mine = Object.values(m.pk).map(x => x[2]?.n);
+      const pool = list.slice(2, 40).filter(p => !mine.includes(p.n));
+      pk[2] = pool[Math.floor(Math.random() * pool.length)] || list[0]; m.botDelay = 5000 + Math.floor(Math.random() * 12000);
+      if (await save(db, id, m, v)) continue; else continue;
+    }
+    if (now > end + 1500) { let ch = false; for (const sl of [1, 2]) if (pk[sl] == null) { pk[sl] = { n: "", r: 0, s: "No pick", y: "" }; ch = true; } if (ch) { if (await save(db, id, m, v)) continue; else continue; } }
+    if (pk[1] != null && pk[2] != null) {
+      pk.t ||= now;
+      if (!pk.done) { pk.done = true; if (await save(db, id, m, v)) continue; else continue; }
+      if (now > pk.t + DRAFT_REVEAL_MS) {
+        if (r + 1 >= DRAFT_ROUNDS) {
+          const tot = sl => Object.values(m.pk).reduce((a, x) => a + (x[sl]?.r || 0), 0);
+          m.t1 = Math.round(tot(1) * 10) / 10; m.t2 = Math.round(tot(2) * 10) / 10;
+          m.series = series(m.t1, m.t2); m.s1 = m.series.w1; m.s2 = m.series.w2; m.done = true;
+        } else { m.round = r + 1; m.rs = now + SPIN_MS + 1000; delete m.botDelay; }
+        if (await save(db, id, m, v)) continue; else continue;
+      }
+    }
+    return m;
+  }
+  return (await load(db, id))?.m;
+}
+
 async function tickInner(env, id) {
   const db = env.DB;
   for (let tries = 0; tries < 3; tries++) {
     const row = await load(db, id);
     if (!row) return null;
     if (row.m.mode === "guess") return tickGuess(env, id);
+    if (row.m.mode === "draft") return tickDraft(env, id);
     const { m, v } = row, r = m.round, now = Date.now(), end = m.rs + SECS * 1000;
     if (m.done || now < m.rs) return m;
     const a = (m.a[r] ||= {});
@@ -280,10 +343,27 @@ function viewGuess(m, slot) {
     round: r, rs: m.rs, secs: (CLUE_MS * CLUES) / 1000, clueMs: CLUE_MS, done: m.done, now, rounds, totalRounds: ROUNDS };
 }
 
+function viewDraft(m, slot) {
+  const o = slot === 1 ? 2 : 1, r = m.round, now = Date.now();
+  const rounds = m.spins.map((sp, i) => {
+    const pk = m.pk[i] || {}, over = !!pk.done;
+    return i > r ? {} : { myTeam: sp[slot], theirTeam: (i < r || now >= m.rs || over) ? sp[o] : null, mine: pk[slot] || null,
+      theirs: over ? pk[o] : null, theyPicked: pk[o] != null, over };
+  });
+  const sum = sl => Math.round(Object.values(m.pk).filter(x => x.done).reduce((a, x) => a + (x[sl]?.r || 0), 0) * 10) / 10;
+  return { mode: "draft", slot, me: slot === 1 ? m.n1 : m.n2, them: slot === 1 ? m.n2 : m.n1, practice: m.p2 === "bot",
+    myScore: m.done ? (slot === 1 ? m.s1 : m.s2) : sum(slot), theirScore: m.done ? (slot === 1 ? m.s2 : m.s1) : sum(o),
+    myTotal: m.done ? (slot === 1 ? m.t1 : m.t2) : sum(slot), theirTotal: m.done ? (slot === 1 ? m.t2 : m.t1) : sum(o),
+    series: m.series ? { mine: slot === 1 ? m.series.w1 : m.series.w2, theirs: slot === 1 ? m.series.w2 : m.series.w1,
+      games: m.series.games.map(g => g === slot), odds: slot === 1 ? m.series.pA : 100 - m.series.pA } : null,
+    round: r, rs: m.rs, spinMs: SPIN_MS, secs: DRAFT_SECS, done: m.done, now, rounds, totalRounds: DRAFT_ROUNDS };
+}
+
 function view(m, pid) {
   const slot = m.p1 === pid ? 1 : m.p2 === pid ? 2 : 0;
   if (!slot) return null;
   if (m.mode === "guess") return viewGuess(m, slot);
+  if (m.mode === "draft") return viewDraft(m, slot);
   const o = slot === 1 ? 2 : 1, r = m.round;
   const rounds = m.prompts.map((p, i) => {
     const a = m.a[i] || {}, j = m.j[i];
@@ -304,6 +384,7 @@ const roomCode = () => Array.from({ length: 5 }, () => ROOM_CHARS[Math.floor(Mat
 
 export async function onRequest({ request, env, params }) {
   if (!env.DB) return json({ error: "Database not connected. Add a D1 binding named DB in Cloudflare." }, 500);
+  ORIGIN = new URL(request.url).origin; ASSETS = env.ASSETS;
   await schema(env.DB);
   const db = env.DB, path = (params.path || []).join("/");
   const body = request.method === "POST" ? await request.json().catch(() => ({})) : {};
@@ -423,6 +504,11 @@ export async function onRequest({ request, env, params }) {
       const r = m.round;
       if (m.done || body.round !== r || now < m.rs) return json({ ok: false });
       if (m.mode === "guess") { if (m.g[r]) return json({ ok: false }); }
+      else if (m.mode === "draft") {
+        m.pk[r] ||= {};
+        if (m.pk[r][slot] != null) return json({ ok: false });
+        m.pk[r][slot] = { n: "", r: 0, s: "Forfeited for leaving the game", y: "" };
+      }
       else {
         m.a[r] ||= {};
         if (m.a[r][slot] != null) return json({ ok: false }); // already locked in before leaving
@@ -430,6 +516,27 @@ export async function onRequest({ request, env, params }) {
       }
       m.cheat ||= {}; m.cheat[r] ||= {}; m.cheat[r][slot] = true;
       if (await save(db, id, m, v)) return json({ ok: true, forfeited: true });
+    }
+    return json({ error: "busy, try again" }, 503);
+  }
+
+  if (path === "pick") {
+    const id = clean(body.id, 20);
+    for (let i = 0; i < 3; i++) {
+      const row = await load(db, id);
+      if (!row) return json({ error: "match not found" }, 404);
+      const { m, v } = row, slot = m.p1 === pid ? 1 : m.p2 === pid ? 2 : 0;
+      if (!slot || m.mode !== "draft") return json({ error: "not your match" }, 403);
+      const r = m.round;
+      if (m.done || body.round !== r || now < m.rs || now > m.rs + DRAFT_SECS * 1000 + 1500) return json({ error: "Time's up for this pick." }, 409);
+      m.pk[r] ||= {};
+      if (m.pk[r][slot] != null) return json({ ok: true });
+      const code = m.spins[r][slot], p = findOnTeam(await team(code), body.text);
+      if (((m.cheat || {})[r] || {})[slot]) return json({ error: "You forfeited this pick for leaving the game." }, 403);
+      if (!p) return json({ error: "That player never played for this team (or check the spelling)." }, 400);
+      if (Object.values(m.pk).some(x => x[slot]?.n === p.n)) return json({ error: `${p.n} is already on your roster.` }, 400);
+      m.pk[r][slot] = p;
+      if (await save(db, id, m, v)) return json({ ok: true, player: p });
     }
     return json({ error: "busy, try again" }, 503);
   }

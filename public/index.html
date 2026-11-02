@@ -66,7 +66,9 @@ button:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
 .how{color:var(--muted);font-size:.92rem;margin:0;padding-left:1.1em;display:flex;flex-direction:column;gap:4px}
 .big{font-family:var(--display);font-size:2.6rem;text-transform:uppercase;line-height:1;margin:0;text-align:center}
 .err{color:var(--lose);font-size:.92rem;margin:0}
-.ac{position:relative;flex:1 1 100%;min-width:0}
+.ac{position:relative;flex:1 1 55%;min-width:0}
+#f{flex-wrap:nowrap;align-items:stretch}
+#f > button{flex:0 0 auto;min-width:5.5em}
 .sug{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:20;list-style:none;margin:0;padding:4px;background:#0a1019;border:1px solid var(--amber);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.5)}
 .sug li{padding:11px 12px;border-radius:6px;cursor:pointer;font-size:1.05rem}
 .sug li[aria-selected="true"],.sug li:hover{background:var(--court);color:var(--amber)}
@@ -272,6 +274,34 @@ body{padding-bottom:calc(64px + env(safe-area-inset-bottom,0px))}
 .clock:not(.calm) .sc-digits polygon.on{animation:ledpulse 1s ease-in-out infinite}
 @keyframes ledpulse{50%{fill:#ff8a7a;filter:drop-shadow(0 0 4px #ff2a1a) drop-shadow(0 0 12px #ff2a1a)}}
 @media (min-width:900px) and (min-height:600px){.sc-digits svg{width:1.3em;height:2.15em}}
+/* Spin & Draft */
+.seg button{font-size:.98rem;padding:10px 4px}
+.wheel{position:relative;width:min(78vw,340px);aspect-ratio:1;margin:6px auto 4px;border-radius:50%;
+  box-shadow:0 0 0 6px #0a0f18,0 0 0 9px var(--amber),0 0 40px rgba(255,178,56,.35),0 20px 40px -10px #000}
+.wheel-rot{position:absolute;inset:0;border-radius:50%;overflow:hidden}
+.wheel-svg{width:100%;height:100%;display:block}
+.pointer{position:absolute;left:50%;top:-14px;z-index:2;width:0;height:0;transform:translateX(-50%);border:14px solid transparent;border-top:26px solid #fff;filter:drop-shadow(0 3px 4px rgba(0,0,0,.6))}
+.hub{position:absolute;inset:0;display:grid;place-items:center;font-size:2rem;pointer-events:none}
+.landed{display:grid;gap:2px;text-align:center;padding:14px;border-radius:10px;background:linear-gradient(135deg,var(--c1),color-mix(in srgb,var(--c1) 55%,#000));
+  border:2px solid var(--c2);box-shadow:0 10px 30px -10px var(--c1);animation:pop .5s cubic-bezier(.2,1.6,.4,1) both}
+.landed b{font-family:var(--display);font-weight:400;font-size:clamp(1.8rem,8vw,2.6rem);text-transform:uppercase;line-height:1;color:#fff;text-shadow:0 2px 0 rgba(0,0,0,.4)}
+.landed .label,.landed .small{color:rgba(255,255,255,.85)}
+.chip{display:inline-grid;place-items:center;min-width:3.1em;padding:3px 5px;border-radius:5px;font-family:var(--mono);font-size:.72rem;font-weight:700;
+  background:var(--c1);color:var(--c2);border:1px solid color-mix(in srgb,var(--c2) 50%,transparent)}
+.chip[style*="--c2:#111111"]{color:#fff}
+.pick{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px;padding:12px;border:1px solid var(--amber);border-radius:8px;animation:pop .4s both}
+.pick b{display:block;font-size:1.15rem}.pick span{font-size:.85rem;color:var(--muted)}.pick em{font-style:normal;font-family:var(--mono);font-weight:700;color:var(--amber);font-size:1.3rem}
+.rosters{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:480px){.rosters{grid-template-columns:1fr}}
+.roster{display:flex;flex-direction:column;gap:6px;min-width:0}
+.slot{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:8px;padding:7px 8px;border-radius:6px;background:rgba(255,255,255,.03);border:1px solid var(--line);animation:fadeUp .3s both}
+.slot.empty{opacity:.45}.slot .num{font-family:var(--mono);color:var(--muted);min-width:3.1em;text-align:center}
+.slot .sn{font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.slot .sn.muted{color:var(--muted);font-weight:400}
+.slot .rt{font-family:var(--mono);color:var(--amber);font-weight:700}
+.games{display:flex;gap:6px;justify-content:center;flex-wrap:wrap}
+.games span{font-family:var(--mono);font-size:.8rem;padding:5px 8px;border-radius:5px;animation:pop .3s both}
+.games span.w{background:rgba(79,209,139,.18);color:var(--win);border:1px solid var(--win)}
+.games span.l{background:rgba(255,107,94,.12);color:var(--lose);border:1px solid var(--lose)}
 #confetti{position:fixed;inset:0;pointer-events:none;z-index:50}
 
 @media (prefers-reduced-motion:reduce){
@@ -289,6 +319,7 @@ body{padding-bottom:calc(64px + env(safe-area-inset-bottom,0px))}
   <main id="app"></main>
 </div>
 <a class="credit" href="https://www.tiktok.com/@wyaclaw" target="_blank" rel="noopener">Made by <b>@wyaclaw</b> <span>on TikTok &amp; Discord</span></a>
+<script src="franchises.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

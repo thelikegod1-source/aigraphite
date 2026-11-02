@@ -30,3 +30,4 @@ Every push to `main` updates the site.
 - **Private rooms:** "Play a friend" makes a 5-letter code.
 - **Share card:** image of your result for Instagram/TikTok.
 - **Installable:** Add to Home Screen opens it full-screen like an app.
+- **Spin & Draft:** spin a wheel of all 30 franchises, draft anyone who ever played for that team, 6 picks, best-of-7 series decides it. Ratings live in `public/teams/*.json`, built by `lib/build-teams.py` from public box-score data (1947 to March 2025).

@@ -5,11 +5,12 @@ const store = { get(k) { try { return localStorage.getItem(k); } catch { return 
 
 let pid = store.get("db_pid");
 if (!pid) { pid = crypto.randomUUID().replace(/-/g, ""); store.set("db_pid", pid); }
-let mode = store.get("db_mode") === "guess" ? "guess" : "deep";
+let mode = ["guess", "draft"].includes(store.get("db_mode")) ? store.get("db_mode") : "deep";
 let me = { name: store.get("db_name") || null, elo: 1000, w: 0, l: 0, d: 0, rank: null };
 
 const MODES = {
   deep: { name: "Deep Ball", how: ["Same prompt for both players. 30 seconds to answer.", "Correct answers score 1–10. Forgotten deep cuts score high, famous or recent picks score low.", "Wrong or blank answers score 0. First to 3 rounds wins."] },
+  draft: { name: "Spin & Draft", how: ["Spin the wheel to land on a random NBA team, then draft anyone who ever played for them. 25 seconds per pick.", "Each player spins their own wheel, so luck matters. Six spins build a 6-man roster.", "Every player is rated on his best season with that team. The better roster usually wins the best-of-7 series, but upsets happen."] },
   guess: { name: "Guess the Player", how: ["You start with the position and years played. Then a clue drops every 6 seconds, from hardest to easiest.", "First to name the player takes the round. Guess on clue 1 for 5 points, clue 5 for 1.", "Wrong guesses cost nothing, so keep firing. Most points after 5 players wins."] },
 };
 
@@ -50,7 +51,8 @@ function home(msg) {
     <p class="online" id="online"><i></i><span>${online ? `${online} online now` : "Checking who's online…"}</span></p>
     <div class="seg" role="group" aria-label="Game mode">
       <button data-mode="deep" aria-pressed="${mode === "deep"}">Deep Ball</button>
-      <button data-mode="guess" aria-pressed="${mode === "guess"}">Guess the Player</button>
+      <button data-mode="guess" aria-pressed="${mode === "guess"}">Guess</button>
+      <button data-mode="draft" aria-pressed="${mode === "draft"}">Spin & Draft</button>
     </div>
     <div class="btns"><button id="find">Find match</button><button id="friend" class="ghost">Play a friend</button></div>
     <div class="btns"><button id="bot" class="ghost">Practice vs AI</button></div>
@@ -211,7 +213,7 @@ const dots = () => `<div class="dots">${Array.from({ length: S.totalRounds }, (_
 function render() {
   if (view !== "match" || !S) return;
   if (S.done) return renderDone();
-  return S.mode === "guess" ? renderGuess() : renderDeep();
+  return S.mode === "guess" ? renderGuess() : S.mode === "draft" ? renderDraft() : renderDeep();
 }
 
 function renderDone() {
@@ -220,10 +222,13 @@ function renderDone() {
   const won = S.myScore > S.theirScore, lost = S.myScore < S.theirScore;
   const t = won ? ["You win", "var(--win)"] : lost ? ["You lose", "var(--lose)"] : ["Draw", "var(--amber)"];
   app.innerHTML = `${boardBar()}<div class="panel end ${won ? "won" : lost ? "lost" : ""}"><div class="trophy" aria-hidden="true">${won ? "🏆" : lost ? "😤" : "🤝"}</div><p class="big" style="color:${t[1]}">${t[0]}</p>
-    <p class="status">${S.myScore} – ${S.theirScore}${S.mode === "guess" ? " points" : ""}</p>
+    ${S.mode === "draft" ? "" : `<p class="status">${S.myScore} – ${S.theirScore}${S.mode === "guess" ? " points" : ""}</p>`}
+    ${S.mode === "draft" && S.series ? `<p class="status">Series: <b>${S.series.mine}–${S.series.theirs}</b> · roster ${S.myTotal} vs ${S.theirTotal} · your odds were ${S.series.odds}%</p>
+      <div class="games">${S.series.games.map((w, i) => `<span class="${w ? "w" : "l"}">G${i + 1}</span>`).join("")}</div>` : ""}
     ${S.practice ? `<p class="status small">Practice match. Your Elo didn't change.</p>` : `<p class="status small">Your Elo is now <b>${me.elo}</b>${me.rank ? ` · rank #${me.rank}` : ""}</p>`}
     <div class="btns"><button id="share">Share result</button><button class="ghost" id="again">Play again</button></div>
-    <div class="btns"><button class="ghost" id="home">Home</button></div></div>`;
+    <div class="btns"><button class="ghost" id="home">Home</button></div></div>
+    ${S.mode === "draft" ? `<div class="panel rosters">${rosterList(S.rounds.map(x => x.mine ? { ...x.mine, team: x.myTeam, shown: true } : null), `Your roster · ${S.myTotal}`)}${rosterList(S.rounds.map(x => x.theirs ? { ...x.theirs, team: x.theirTeam, shown: true } : null), `${S.them} · ${S.theirTotal}`)}</div>` : ""}`;
   $("#share").onclick = shareCard;
   if (won) setTimeout(confetti, 250);
   (won ? SFX.win : lost ? SFX.lose : SFX.roundWin)();
@@ -406,6 +411,7 @@ function roundLive() {
   if (view !== "match" || !S || S.done) return false;
   const R = S.rounds[S.round], now = Date.now() + skew;
   if (now < S.rs) return false;
+  if (S.mode === "draft") return !R.mine && !R.over && now < S.rs + S.secs * 1000;
   return S.mode === "guess" ? !R.result && !R.forfeit && now < S.rs + S.secs * 1000 : R.mine == null && !R.verdict && now < S.rs + S.secs * 1000;
 }
 document.addEventListener("visibilitychange", async () => {
@@ -460,11 +466,11 @@ const NICKS = Object.entries(NICK).flatMap(([n, a]) => a.map(x => [nrm(x), n]));
 // Rough "sounds like" key: ph=f, c/ck=k, z=s, y=i, j=y at the start, no double letters.
 const snd = w => w.replace(/^gi(?=[aeiou])/, "y").replace(/^j/, "y").replace(/ph/g, "f").replace(/ck/g, "k").replace(/c/g, "k")
   .replace(/z/g, "s").replace(/y/g, "i").replace(/(.)\1+/g, "$1");
-function suggest(q) {
-  q = nrm(q); if (!NAMES || q.length < 2) return [];
+function suggest(q, pool = NAMES) {
+  q = nrm(q); if (!pool || q.length < 2) return [];
   const pinned = q.length < 2 ? [] : NICKS.filter(([a]) => a === q || (q.length >= 3 && (a.startsWith(q) || dist(q, a) <= 1)) || (a.length >= 4 && q.startsWith(a))).map(([, n]) => n);
   const qt = q.split(" "), last = qt[qt.length - 1], out = [];
-  for (const x of NAMES) {
+  for (const x of pool) {
     let s = null;
     if (x.k.startsWith(q)) s = 0;
     else if (qt.every(t => x.w.some(w => w.startsWith(t)))) s = 1;
@@ -482,9 +488,10 @@ function suggest(q) {
     if (s !== null) out.push([s, x.n]);
   }
   const ranked = out.sort((a, b) => a[0] - b[0] || a[1].length - b[1].length || a[1].localeCompare(b[1])).map(x => x[1]);
-  return [...new Set([...pinned, ...ranked])].slice(0, 6);
+  const inPool = pool === NAMES ? pinned : pinned.filter(n => pool.some(x => x.n === n));
+  return [...new Set([...inPool, ...ranked])].slice(0, 6);
 }
-function autocomplete(inp) {
+function autocomplete(inp, pool) {
   const ul = inp.parentElement.querySelector(".sug"); if (!ul) return;
   let items = [], active = -1;
   const close = () => { ul.hidden = true; inp.setAttribute("aria-expanded", "false"); active = -1; };
@@ -495,8 +502,8 @@ function autocomplete(inp) {
     ul.querySelectorAll("li").forEach((li, i) => li.addEventListener("pointerdown", e => { e.preventDefault(); pick(items[i]); }));
   };
   const update = async () => {
-    if (!NAMES) await loadNames();
-    items = suggest(inp.value);
+    if (!pool && !NAMES) await loadNames();
+    items = suggest(inp.value, pool || NAMES);
     if (items.length && nrm(items[0]) === nrm(inp.value)) items = []; // already typed exactly: get out of the way
     active = -1; paint();
   };
@@ -512,6 +519,94 @@ function autocomplete(inp) {
   if (inp.value) update();
 }
 loadNames();
+
+/* ---------- Spin & Draft ---------- */
+const FR = Object.fromEntries((window.FRANCHISES || []).map(([c, city, name, c1, c2]) => [c, { c, city, name, c1, c2 }]));
+const rosterCache = {};
+async function roster(code) {
+  if (!rosterCache[code]) rosterCache[code] = fetch(`/teams/${code}.json`).then(r => r.json()).then(l => l.map(p => ({ ...p, k: nrm(p.n), w: nrm(p.n).split(" ") })));
+  return rosterCache[code];
+}
+const chip = code => { const t = FR[code]; return t ? `<span class="chip" style="--c1:${t.c1};--c2:${t.c2}">${t.c}</span>` : ""; };
+const teamName = code => FR[code] ? `${FR[code].city} ${FR[code].name}` : code;
+function wheelSVG() {
+  const F = window.FRANCHISES || [], n = F.length, R = 150, seg = 360 / n;
+  const pt = a => [R + R * Math.sin(a * Math.PI / 180), R - R * Math.cos(a * Math.PI / 180)];
+  return `<svg viewBox="0 0 300 300" class="wheel-svg" aria-hidden="true">${F.map(([c, , , c1, c2], i) => {
+    const [x1, y1] = pt(i * seg), [x2, y2] = pt((i + 1) * seg), mid = i * seg + seg / 2;
+    return `<path d="M150,150 L${x1},${y1} A150,150 0 0,1 ${x2},${y2} Z" fill="${c1}" stroke="#0d1420" stroke-width="1.2"/>
+      <text x="150" y="26" transform="rotate(${mid} 150 150)" fill="${c2 === "#111111" ? "#fff" : c2}" font-size="11" font-weight="700" text-anchor="middle" font-family="Chivo Mono, monospace">${c}</text>`;
+  }).join("")}<circle cx="150" cy="150" r="34" fill="#0d1420" stroke="#ffb238" stroke-width="3"/></svg>`;
+}
+function spinWheel(code, ms) {
+  const w = $(".wheel-rot"); if (!w) return;
+  const F = window.FRANCHISES || [], i = F.findIndex(f => f[0] === code), seg = 360 / F.length;
+  const target = 360 * 6 - (i * seg + seg / 2) + (Math.random() - .5) * seg * .6;
+  w.style.transition = "none"; w.style.transform = "rotate(0deg)";
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    w.style.transition = `transform ${Math.max(800, ms)}ms cubic-bezier(.12,.7,.18,1)`; w.style.transform = `rotate(${target}deg)`;
+    const ticks = Math.min(24, Math.floor(ms / 120)); for (let k = 0; k < ticks; k++) setTimeout(() => tone(1400, .02, "square", .04), ms * (1 - Math.pow(1 - k / ticks, 2.2)));
+    setTimeout(() => { SFX.roundWin(); buzz(30); }, ms);
+  }));
+}
+function rosterList(picks, title, hide) {
+  return `<div class="roster"><span class="label">${esc(title)}</span>${Array.from({ length: S.totalRounds }, (_, i) => {
+    const p = picks[i];
+    if (!p) return `<div class="slot empty"><span class="num">${i + 1}</span><span class="sn">—</span></div>`;
+    if (hide && !p.shown) return `<div class="slot">${chip(p.team)}<span class="sn muted">Picked</span></div>`;
+    return `<div class="slot">${chip(p.team)}<span class="sn">${p.n ? esc(p.n) : "<em>No pick</em>"}</span><span class="rt">${p.r ? p.r.toFixed(1) : "0"}</span></div>`;
+  }).join("")}</div>`;
+}
+function renderDraft() {
+  const r = S.round, R = S.rounds[r], now = Date.now() + skew;
+  const state = R.over ? "over" : now < S.rs ? "spin" : R.mine ? "wait" : "pick";
+  const key = [r, state, S.myScore, S.theirScore, R.theyPicked, R.mine?.n].join("|");
+  if (key === lastKey) { clock(); return; }
+  lastKey = key;
+  const myPicks = S.rounds.map(x => x.mine ? { ...x.mine, team: x.myTeam, shown: true } : null);
+  const theirPicks = S.rounds.map(x => x.theirs ? { ...x.theirs, team: x.theirTeam, shown: true } : null);
+  let body;
+  if (state === "spin") {
+    body = `<span class="label">Pick ${r + 1} of ${S.totalRounds} · spinning…</span>
+      <div class="wheel"><div class="pointer"></div><div class="wheel-rot">${wheelSVG()}</div><div class="hub">🏀</div></div>`;
+  } else {
+    const t = FR[R.myTeam] || {};
+    const banner = `<div class="landed" style="--c1:${t.c1};--c2:${t.c2}"><span class="label">You landed</span><b>${esc(teamName(R.myTeam))}</b>
+      <span class="small">${R.theirTeam ? `${esc(S.them)} got ${esc(teamName(R.theirTeam))}` : ""}</span></div>`;
+    if (state === "pick") body = `<span class="label">Pick ${r + 1} of ${S.totalRounds}</span>${banner}
+      <form id="f" class="btns" autocomplete="off"><div class="ac"><input type="text" id="ans" maxlength="40" placeholder="Anyone who ever played for them" aria-label="Your pick" role="combobox" aria-autocomplete="list" aria-controls="sug" aria-expanded="false" autocapitalize="words" spellcheck="false"><ul class="sug" id="sug" role="listbox" hidden></ul></div><button>Draft</button></form>
+      <p class="status small" id="perr"></p>`;
+    else if (state === "wait") body = `<span class="label">Pick ${r + 1} of ${S.totalRounds}</span>${banner}
+      <div class="pick">${chip(R.myTeam)}<div><b>${esc(R.mine.n || "No pick")}</b><span>${esc(R.mine.s || "")}</span></div><em>${(R.mine.r || 0).toFixed(1)}</em></div>
+      <p class="status pulse">${R.theyPicked ? "Both picked…" : `Waiting on ${esc(S.them)}…`}</p>`;
+    else body = `<span class="label">Pick ${r + 1} of ${S.totalRounds} · results</span>
+      <div class="ans">${[["You", R.mine, R.myTeam], [S.them, R.theirs, R.theirTeam]].map(([who, p, tm]) => `<div class="card ${p && R.mine && R.theirs && p.r >= Math.max(R.mine.r, R.theirs.r) && p.r > 0 ? "w" : ""}"><span class="label">${esc(who)} · ${esc(teamName(tm))}</span>
+        <span class="a">${p?.n ? esc(p.n) : "<em>No pick</em>"}</span><span class="score ok">${(p?.r || 0).toFixed(1)} rating</span><span class="why">${esc(p?.s || "")}${p?.y ? ` · with them ${esc(p.y)}` : ""}</span></div>`).join("")}</div>`;
+  }
+  const keep = $("#ans")?.value || "";
+  const sc = ["draft", r, state].join("|");
+  if (sc !== lastScene) {
+    if (state === "spin" && r > 0) overlay(`<div class="banner">Pick ${r + 1}</div>`, 900);
+    if (state === "over") (R.mine?.r >= (R.theirs?.r || 0) ? SFX.roundWin : SFX.roundLoss)();
+  }
+  scene = sc;
+  app.innerHTML = `${boardBar()}<div class="panel">${dots()}${body}</div>
+    <div class="panel rosters">${rosterList(myPicks, "Your roster")}${rosterList(theirPicks, S.them + "'s roster")}</div>`;
+  if (state === "spin" && sc !== lastSpun) { lastSpun = sc; spinWheel(R.myTeam, Math.min(3600, S.rs - now - 250)); }
+  else if (state === "spin") { const w = $(".wheel-rot"); if (w) w.style.transform = "rotate(0deg)"; }
+  const inp = $("#ans");
+  if (inp) {
+    inp.value = keep; inp.focus({ preventScroll: true });
+    roster(R.myTeam).then(list => autocomplete(inp, list));
+    $("#f").onsubmit = async e => {
+      e.preventDefault(); const text = inp.value.trim(); if (!text) return;
+      try { await api("pick", { id: matchId, round: r, text }); S = await api("match?id=" + matchId); lastKey = ""; render(); }
+      catch (err) { const pe = $("#perr"); if (pe) { pe.textContent = err.message; pe.className = "status small bad"; } inp.classList.remove("shake"); void inp.offsetWidth; inp.classList.add("shake"); SFX.wrong(); }
+    };
+  }
+  clock();
+}
+let lastSpun = "";
 
 /* ---------- Share card ---------- */
 async function shareCard() {
@@ -533,6 +628,9 @@ async function shareCard() {
   if (S.mode === "deep") {
     const top = S.rounds.filter(r => r.verdict?.me?.valid).sort((a, b) => b.verdict.me.score - a.verdict.me.score)[0];
     if (top) best = `Deepest pull: ${top.mine} (${top.verdict.me.score}/10)`;
+  } else if (S.mode === "draft") {
+    const top = S.rounds.filter(r => r.mine?.n).sort((a, b) => b.mine.r - a.mine.r)[0];
+    if (top) best = `Best pick: ${top.mine.n} (${teamName(top.myTeam)})${S.series ? ` · series ${S.series.mine}-${S.series.theirs}` : ""}`;
   } else {
     const top = S.rounds.filter(r => r.result === "win").sort((a, b) => b.pts - a.pts)[0];
     if (top) best = `Named ${top.answer} for ${top.pts} pts`;
