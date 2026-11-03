@@ -27,8 +27,9 @@ async function refreshMe() {
 }
 
 let online = 0;
+let pollToken = 0;
 let timer = null, clockTimer = null, matchId = null, S = null, skew = 0, view = "home", lastKey = "", rated = false;
-const stop = () => { clearInterval(timer); timer = null; clearInterval(clockTimer); clockTimer = null; };
+const stop = () => { clearInterval(timer); timer = null; clearInterval(clockTimer); clockTimer = null; pollToken++; };
 
 function nav(active) {
   const tab = (id, label) => `<button class="tab" data-go="${id}" ${active === id ? 'aria-current="page"' : ""}>${label}</button>`;
@@ -105,7 +106,7 @@ function find() {
     try { const d = await api("queue", { mode }); if (d.match && view === "search") join(d.match); }
     catch (e) { home(e.message); }
   };
-  poll(); timer = setInterval(poll, 2000);
+  poll(); timer = setInterval(poll, 3000);
 }
 
 function friend(msg) {
@@ -134,7 +135,7 @@ function friend(msg) {
       timer = setInterval(async () => {
         if (view !== "room") return;
         try { const d = await api("room/status", { code }); if (d.match) join(d.match); } catch (e) { friend(e.message); }
-      }, 1500);
+      }, 2500);
     } catch (e) { friend(e.message); }
   };
 }
@@ -143,9 +144,11 @@ function friend(msg) {
 function join(id) {
   stop(); view = "match"; matchId = id; S = null; lastKey = ""; rated = false;
   app.innerHTML = `<p class="status pulse">Loading match…</p>`;
-  const poll = async () => {
-    try {
-      const d = await api("match?id=" + id);
+  const token = ++pollToken;
+  let h = "";
+  const handle = async d => {
+    {
+      h = d.h || "";
       const first = !S;
       skew = d.now - Date.now(); S = d; applyTrolls(d.trolls);
       if (first && !d.done && d.round === 0) {
@@ -153,10 +156,23 @@ function join(id) {
         SFX.whistle(); buzz(40);
       }
       render();
-      if (d.done) { clearInterval(timer); if (!d.practice && !rated) { rated = true; await refreshMe(); lastKey = ""; render(); } }
-    } catch (e) { if (view === "match" && !S) home(e.message); }
+      if (d.done && !d.practice && !rated) { rated = true; await refreshMe(); lastKey = ""; render(); }
+    }
   };
-  poll(); timer = setInterval(poll, 900);
+  // Wait-for-changes loop: the server answers as soon as something happens (or every ~6s).
+  (async () => {
+    while (token === pollToken && view === "match") {
+      try {
+        const d = await api(`match?id=${id}&h=${h}`);
+        if (token !== pollToken) break;
+        await handle(d);
+        if (d.done) break;
+      } catch (e) {
+        if (view === "match" && !S) { home(e.message); break; }
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
+  })();
   clockTimer = setInterval(clock, 250);
 }
 

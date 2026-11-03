@@ -397,6 +397,12 @@ function viewMode(m, slot) {
     round: r, rs: m.rs, secs: SECS, done: m.done, now: Date.now(), judging: !!m.judging, rounds, totalRounds: ROUNDS, toWin: WIN };
 }
 
+function fingerprint(str) { // FNV-1a, enough to tell "something changed"
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return (h >>> 0).toString(36);
+}
+
 async function nameFor(db, pid, fallback) {
   const r = await db.prepare("SELECT name FROM players WHERE pid=?").bind(pid).first();
   return r?.name || clean(fallback, 20) || "Player";
@@ -509,11 +515,20 @@ export async function onRequest({ request, env, params }) {
     return json({ match: id });
   }
 
+  // Long-poll: the phone sends a fingerprint of what it already has (h). We hold the request open
+  // for up to 6s and answer as soon as anything changes. Same speed for players, far fewer requests.
   if (path === "match") {
-    const id = clean(url.searchParams.get("id") || body.id, 20);
-    const m = await tick(env, id);
-    const out = m && view(m, pid);
-    return out ? json(out) : json({ error: "match not found" }, 404);
+    const id = clean(url.searchParams.get("id") || body.id, 20), had = url.searchParams.get("h") || "";
+    const until = Date.now() + (had ? 6000 : 0);
+    for (;;) {
+      const m = await tick(env, id);
+      const out = m && view(m, pid);
+      if (!out) return json({ error: "match not found" }, 404);
+      const { now: _n, ...rest } = out;
+      const h = fingerprint(JSON.stringify(rest));
+      if (!had || h !== had || out.done || Date.now() >= until) return json({ ...out, now: Date.now(), h });
+      await new Promise(r => setTimeout(r, 1000));
+    }
   }
 
   // Anti-cheat: the page reports when a player left mid-round (another tab or app). That round is forfeited.
