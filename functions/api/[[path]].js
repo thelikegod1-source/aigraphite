@@ -743,6 +743,16 @@ export async function onRequest({ request, env, params }) {
     return json({ error: "busy, try again" }, 503);
   }
 
+  // Owner-only: gift or remove Deep Ball+ for a player code (not tied to Stripe).
+  if (path === "admin/plus") {
+    if (!(await isAdmin(pid))) return json({ error: "not found" }, 404);
+    const target = clean(body.target, 40).toLowerCase(), on = body.on === false ? 0 : 1;
+    if (!/^[a-z0-9]{8,40}$/.test(target)) return json({ error: "That player code doesn't look right." }, 400);
+    await db.prepare(`INSERT INTO plus (pid,active,customer,sub,t) VALUES (?,?,'gift','',?) ON CONFLICT(pid) DO UPDATE SET active=excluded.active, t=excluded.t`).bind(target, on, now).run();
+    const p = await db.prepare("SELECT name FROM players WHERE pid=?").bind(target).first();
+    return json({ ok: true, name: p?.name || null, plus: !!on });
+  }
+
   if (path === "troll") {
     if (!(await isAdmin(pid))) return json({ error: "not found" }, 404);
     const k = String(body.kind || ""), id = clean(body.id, 20);

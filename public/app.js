@@ -828,6 +828,12 @@ async function support(msg) {
     <div class="btns"><button id="host">Duos / custom</button><button class="ghost" id="tour">Tournament</button></div>
     ${cfg.manageUrl ? `<p class="small"><a href="${esc(cfg.manageUrl)}" target="_blank" rel="noopener" style="color:var(--amber)">Manage or cancel your subscription</a></p>` : ""}
   </div>
+  ${me.admin ? `<div class="panel">
+    <span class="label">Owner · gift Plus</span>
+    <form id="gf" class="btns" autocomplete="off"><input type="text" id="gcode" placeholder="Player code" aria-label="Player code to gift Plus"><button>Grant</button></form>
+    <div class="btns"><button class="ghost" id="grev">Remove Plus</button></div>
+    <p class="small" id="gmsg">Players find their code on the Profile tab.</p>
+  </div>` : ""}
   <div class="panel">
     <label class="label" for="qs">My custom questions</label>
     <p class="small">One question per line, up to 30. Example: Name a player who played for the Seattle SuperSonics</p>
@@ -856,6 +862,15 @@ async function support(msg) {
   </div>`;
   wireNav();
   if ($("#copyh")) $("#copyh").onclick = async () => { try { await navigator.clipboard.writeText("wyaclaw"); $("#copyh").textContent = "Copied"; } catch { $("#copyh").textContent = "@wyaclaw"; } };
+  if ($("#gf")) {
+    const gift = async on => {
+      const m = $("#gmsg");
+      try { const d = await api("admin/plus", { target: $("#gcode").value.trim(), on }); m.textContent = `${on ? "Granted Plus to" : "Removed Plus from"} ${d.name || "that player"}.`; m.className = "small ok"; }
+      catch (e) { m.textContent = e.message; m.className = "small bad"; }
+    };
+    $("#gf").onsubmit = e => { e.preventDefault(); gift(true); };
+    $("#grev").onclick = () => gift(false);
+  }
   if ($("#recheck")) $("#recheck").onclick = () => support(me.plus ? "Plus is active." : "");
   if ($("#host")) $("#host").onclick = () => friend();
   if ($("#tour")) $("#tour").onclick = () => tourCreate();
