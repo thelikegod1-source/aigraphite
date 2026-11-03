@@ -440,13 +440,87 @@ body{padding-bottom:calc(70px + env(safe-area-inset-bottom,0px))}
   *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
   body::after{animation:none}
 }
+
+/* ================= Pro refresh: flat, sharp, calm (overrides everything above) ================= */
+:root{--display:"Barlow Condensed","Arial Narrow",sans-serif;--line:#223047;--court:#111b2b;--bg:#0a111c}
+body{background-image:none;background:var(--bg)}
+body::after{display:none}
+body::before{opacity:.035}
+h1{font-family:var(--display);font-weight:800;font-style:normal;transform:none;letter-spacing:-.01em;font-size:clamp(2.8rem,12vw,4.2rem);animation:none}
+h1 span{font-style:normal;background:none;-webkit-background-clip:initial;background-clip:initial;color:var(--amber);filter:none;animation:none;margin-left:.18em}
+.tag{color:var(--muted);font-size:.95rem}
+.onair{font-style:normal;clip-path:none;background:none;color:#ff4a3d;border:1px solid rgba(255,74,61,.45);padding:2px 10px;border-radius:999px;font-size:.78rem;letter-spacing:.16em}
+.onair i{background:#ff4a3d}
+/* Surfaces */
+.panel{border-radius:10px;border:1px solid var(--line);border-left:1px solid var(--line);background:var(--court);box-shadow:none}
+#app > .panel:not(.still)::after{display:none}
+#app > *{animation:fadeUp .35s ease-out both}
+.panel > .label:first-child,.panel > .row:first-child .label,.panel > label.label:first-child{margin:0;padding:0 0 0 10px;background:none;clip-path:none;color:var(--muted);
+  font-family:var(--mono);font-style:normal;font-weight:500;font-size:.72rem;letter-spacing:.16em;border-left:2px solid var(--amber)}
+/* Type: no slant anywhere */
+.big,.prompt,button,a.btn,.pname,.pstrip,.segcard b,.tk-run span,.tk-label,.banner{font-style:normal!important}
+.prompt{transform:none;font-family:var(--display);font-weight:800;letter-spacing:0}
+.big{font-family:var(--display);font-weight:800}
+/* Buttons: flat, sharp, no 3D, no shine */
+button,a.btn{font-family:var(--display);font-weight:700;letter-spacing:.06em;border-radius:6px;transition:background-color .15s,border-color .15s,color .15s,opacity .15s}
+button:not(.ghost):not(.link):not(.tab):not([aria-pressed]),a.btn{box-shadow:none!important;background:var(--amber);color:#16110a}
+button:not(.ghost):not(.link):not(.tab):not([aria-pressed]):hover,a.btn:hover{background:#ffc25e;transform:none!important}
+button:not(.link):not(:disabled):hover,button:not(.link):not(:disabled):active{transform:none!important}
+button:not(.link)::after{display:none}
+button.ghost:hover,.tabs .tab:hover{box-shadow:none;border-color:#3a4c6a}
+#find{animation:none}
+.ripple{background:rgba(255,255,255,.18)}
+.troll-fab{animation:none}
+/* Nav */
+.tabs .tab{font-family:var(--display);font-weight:700;border-radius:6px;background:transparent;border:1px solid var(--line)}
+.tabs .tab[aria-current]{background:rgba(255,178,56,.08);box-shadow:inset 0 -2px 0 var(--amber);border-color:var(--line)}
+.tabs .heart,.tabs .snd{display:grid;place-items:center;padding:0 12px}
+.tabs svg{width:20px;height:20px}
+/* Mode cards */
+.segcard{border-radius:10px;background:#0d1626}
+.segcard .ic{background:none;border:1px solid var(--line);border-radius:10px;width:48px;height:48px;color:var(--muted)}
+.segcard .ic svg{width:24px;height:24px}
+.segcard b{font-family:var(--display);font-weight:800;font-style:normal;font-size:1.45rem;letter-spacing:.01em}
+.segcard[aria-pressed="true"]{background:#141d2c;box-shadow:inset 3px 0 0 var(--amber)!important;border-color:#3a4c6a!important}
+.segcard[aria-pressed="true"] .ic{color:var(--amber);border-color:rgba(255,178,56,.5)}
+.segcard[aria-pressed="true"]::before{display:none}
+.pstrip{font-family:var(--display);font-weight:700;font-style:normal}
+.pstrip .elo{border-radius:6px;background:transparent}
+/* Scoreboard: clean */
+.board{border-radius:10px;border:1px solid var(--line);background:#070c15}
+.board .side,.board .side.r{background:transparent}
+.board .side::after{height:2px}
+.board .pname{font-family:var(--display);font-weight:700;text-transform:none;font-size:1.1rem}
+.board .pts{text-shadow:none;font-family:var(--mono)}
+.pts.bump{animation:none}
+/* Calm moments */
+.trophy{font-size:inherit;filter:none;animation:fadeUp .4s both;color:var(--amber);width:64px;height:64px}
+.end.lost .trophy{color:var(--muted)}
+.end.won{box-shadow:none;border-color:rgba(79,209,139,.5)}
+.trophy svg{width:100%;height:100%}
+.card,.card.w,.prompt,.status.ok,.big,.code,.cheat,.sug,.landed,.pick,.slot{animation-duration:.3s!important;animation-name:fadeUp!important;animation-iteration-count:1!important}
+.card.w{box-shadow:inset 0 0 0 1px var(--win)}
+.code{text-shadow:none}
+.hint{border-radius:6px}
+/* Lower thirds: flat */
+.banner{background:#f2f4f7;color:#0a111c;clip-path:none;border-left:6px solid var(--amber);font-family:var(--display);font-weight:800;text-transform:uppercase;padding:6px 26px 8px 16px;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+.banner::before{background:none;color:#5b6678;padding:0;letter-spacing:.24em;font-size:.72rem}
+.vs b{text-shadow:none}
+.vs span,.vs b{font-family:var(--display);font-weight:800}
+/* Ticker: flat */
+.ticker{background:#070c15;border-top:1px solid var(--line);box-shadow:none}
+.tk-label{clip-path:none;background:none;color:var(--amber);border-right:1px solid var(--line);font-family:var(--mono);font-weight:500;font-size:.62rem;letter-spacing:.14em}
+.tk-label b{font-size:.62rem;font-weight:500}
+.tk-run span{font-family:var(--display);font-weight:600;letter-spacing:.03em;text-transform:none;color:#c6cfdb}
+.online i{animation:none}
+@media (prefers-reduced-motion:reduce){#app > *{animation:none}}
 </style>
 </head>
 <body>
 <div class="wrap">
   <header class="net">
-    <div class="netbar"><span class="onair"><i></i>On air</span><span class="netclock" id="netclock"></span></div>
-    <h1><i class="ball" aria-hidden="true"></i>Deep<span> Ball</span></h1>
+    <div class="netbar"><span class="onair"><i></i>Live</span><span class="netclock" id="netclock"></span></div>
+    <h1>Deep<span> Ball</span></h1>
     <p class="tag">1v1 NBA knowledge games. Deep pulls win.</p>
   </header>
   <main id="app"></main>

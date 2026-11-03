@@ -33,13 +33,26 @@ const stop = () => { clearInterval(timer); timer = null; clearInterval(clockTime
 
 function nav(active) {
   const tab = (id, label) => `<button class="tab" data-go="${id}" ${active === id ? 'aria-current="page"' : ""}>${label}</button>`;
-  return `<nav class="tabs">${tab("home", "Play")}${tab("board", "Ranks")}${tab("profile", "Profile")}<button class="tab heart" data-go="support" aria-label="Support Deep Ball" ${active === "support" ? 'aria-current="page"' : ""}>💛</button><button class="tab snd" id="snd" aria-label="${muted ? "Turn sound on" : "Turn sound off"}" aria-pressed="${!muted}">${muted ? "🔇" : "🔊"}</button></nav>`;
+  return `<nav class="tabs">${tab("home", "Play")}${tab("board", "Ranks")}${tab("profile", "Profile")}<button class="tab heart" data-go="support" aria-label="Support Deep Ball" ${active === "support" ? 'aria-current="page"' : ""}>${ICON.heart}</button><button class="tab snd" id="snd" aria-label="${muted ? "Turn sound on" : "Turn sound off"}" aria-pressed="${!muted}">${muted ? ICON.mute : ICON.sound}</button></nav>`;
 }
 function wireNav() {
   document.querySelectorAll("[data-go]").forEach(b => b.onclick = () => ({ home, board, profile, support })[b.dataset.go]());
   const sb = $("#snd");
-  if (sb) sb.onclick = () => { muted = !muted; store.set("db_mute", muted ? "1" : "0"); sb.textContent = muted ? "🔇" : "🔊"; sb.setAttribute("aria-pressed", String(!muted)); if (!muted) SFX.roundWin(); };
+  if (sb) sb.onclick = () => { muted = !muted; store.set("db_mute", muted ? "1" : "0"); sb.innerHTML = muted ? ICON.mute : ICON.sound; sb.setAttribute("aria-pressed", String(!muted)); if (!muted) SFX.roundWin(); };
 }
+
+/* ---------- Line icons (no emoji) ---------- */
+const ICON = {
+  heart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8z"/></svg>',
+  sound: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/></svg>',
+  mute: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="m22 9-6 6M16 9l6 6"/></svg>',
+  deep: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg>',
+  guess: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m20 20-4.8-4.8"/></svg>',
+  draft: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4"/></svg>',
+  win: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M7 6H4a3 3 0 0 0 3 4M17 6h3a3 3 0 0 1-3 4"/></svg>',
+  lose: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8 16s1.5-2 4-2 4 2 4 2M9 9.5h.01M15 9.5h.01"/></svg>',
+  draw: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M5 9h14M5 15h14"/></svg>',
+};
 
 /* ---------- Play ---------- */
 function home(msg) {
@@ -48,12 +61,12 @@ function home(msg) {
   const M = MODES[mode];
   app.innerHTML = `${nav("home")}
   <div class="panel">
-    <span class="label">Tonight's broadcast</span>
+    <span class="label">Matchday</span>
     <div class="pstrip"><span>${esc(me.name)}</span><span class="elo">${me.elo} ELO${me.rank ? ` · #${me.rank}` : ""}</span></div>
     ${me.admin ? `<p class="troll-on">😈 Troll mode on · the button shows up during matches</p>` : ""}
     <p class="online" id="online"><i></i><span>${online ? `${online} online now` : "Checking who's online…"}</span></p>
     <div class="segcards" role="group" aria-label="Game mode">
-      ${[["deep", "🏀", "Deep Ball", "Name the deepest cut"], ["guess", "🕵️", "Guess the Player", "Clues drop. Name him first."], ["draft", "🎡", "Spin & Draft", "Spin a team. Draft a legend."]]
+      ${[["deep", ICON.deep, "Deep Ball", "Name the deepest cut"], ["guess", ICON.guess, "Guess the Player", "Clues drop. Name him first."], ["draft", ICON.draft, "Spin & Draft", "Spin a team. Draft a legend."]]
         .map(([k, ic, n, sub]) => `<button class="segcard" data-mode="${k}" aria-pressed="${mode === k}"><span class="ic">${ic}</span><b>${n}</b><span class="sub">${sub}</span></button>`).join("")}
     </div>
     <div class="btns"><button id="find">Find match</button><button id="friend" class="ghost">Play a friend</button></div>
@@ -305,7 +318,7 @@ function renderDone() {
   if (key === lastKey) return; lastKey = key;
   const won = S.myScore > S.theirScore, lost = S.myScore < S.theirScore;
   const t = won ? ["You win", "var(--win)"] : lost ? ["You lose", "var(--lose)"] : ["Draw", "var(--amber)"];
-  app.innerHTML = `${boardBar()}<div class="panel end ${won ? "won" : lost ? "lost" : ""}"><div class="trophy" aria-hidden="true">${won ? "🏆" : lost ? "😤" : "🤝"}</div><p class="big" style="color:${t[1]}">${t[0]}</p>
+  app.innerHTML = `${boardBar()}<div class="panel end ${won ? "won" : lost ? "lost" : ""}"><div class="trophy" aria-hidden="true">${won ? ICON.win : lost ? ICON.lose : ICON.draw}</div><p class="big" style="color:${t[1]}">${t[0]}</p>
     ${S.mode === "draft" ? "" : `<p class="status">${S.myScore} – ${S.theirScore}${S.mode === "guess" ? " points" : ""}</p>`}
     ${S.mode === "draft" && S.series ? `<p class="status">Series: <b>${S.series.mine}–${S.series.theirs}</b> · roster ${S.myTotal} vs ${S.theirTotal} · your odds were ${S.series.odds}%</p>
       <div class="games">${S.series.games.map((w, i) => `<span class="${w ? "w" : "l"}">G${i + 1}</span>`).join("")}</div>` : ""}
