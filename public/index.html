@@ -514,6 +514,28 @@ button.ghost:hover,.tabs .tab:hover{box-shadow:none;border-color:#3a4c6a}
 .tk-run span{font-family:var(--display);font-weight:600;letter-spacing:.03em;text-transform:none;color:#c6cfdb}
 .online i{animation:none}
 @media (prefers-reduced-motion:reduce){#app > *{animation:none}}
+
+/* Ragdoll Hoops */
+.hoops{display:flex;flex-direction:column;gap:12px}
+.hp-top{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:10px}
+.hp-sc{display:flex;align-items:center;gap:12px;font-family:var(--display);font-weight:700;text-transform:uppercase;min-width:0}
+.hp-sc span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hp-sc b{font-family:var(--mono);font-size:2rem;line-height:1}
+.hp-sc.blue b{color:#5b8fff}.hp-sc.red{justify-content:flex-end}.hp-sc.red b{color:#ff5d5d}
+.hp-mid{text-align:center;font-family:var(--display);font-weight:800;text-transform:uppercase;font-size:1.1rem;display:grid}
+.hp-mid small{font-family:var(--mono);font-weight:500;font-size:.62rem;letter-spacing:.1em;color:var(--muted)}
+.hp-wrap{position:relative;border-radius:8px;overflow:hidden;border:1px solid var(--line)}
+.hp-wrap canvas{display:block;width:100%;height:auto;touch-action:none}
+.hp-msg{position:absolute;left:50%;top:18%;transform:translate(-50%,-10px);font-family:var(--display);font-weight:800;text-transform:uppercase;font-size:clamp(1.4rem,6vw,2.6rem);
+  color:#fff;text-shadow:0 4px 20px rgba(0,0,0,.8);opacity:0;transition:opacity .2s,transform .2s;pointer-events:none;white-space:nowrap}
+.hp-msg.on{opacity:1;transform:translate(-50%,0)}
+.hp-end{position:absolute;inset:0;display:grid;place-content:center;gap:12px;text-align:center;background:rgba(7,12,21,.82)}
+.hp-ctrl{display:flex;gap:12px}
+.hp-btn{flex:1;min-height:84px;font-size:1.4rem;display:grid;place-items:center;user-select:none;-webkit-user-select:none;touch-action:none}
+.hp-btn small{font-family:var(--mono);font-size:.65rem;opacity:.7}
+.hp-btn.blue{background:#2f62d8!important;color:#fff!important}.hp-btn.red{background:#c63a3a!important;color:#fff!important}
+.hp-btn:active{filter:brightness(1.2)}
+.hp-help{text-align:center}
 </style>
 </head>
 <body>
@@ -529,5 +551,6 @@ button.ghost:hover,.tabs .tab:hover{box-shadow:none;border-color:#3a4c6a}
 <script src="support-config.js"></script>
 <script src="franchises.js"></script>
 <script src="app.js"></script>
+<script src="hoops.js"></script>
 </body>
 </html>

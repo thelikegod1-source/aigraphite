@@ -5,11 +5,12 @@ const store = { get(k) { try { return localStorage.getItem(k); } catch { return 
 
 let pid = store.get("db_pid");
 if (!pid) { pid = crypto.randomUUID().replace(/-/g, ""); store.set("db_pid", pid); }
-let mode = ["guess", "draft"].includes(store.get("db_mode")) ? store.get("db_mode") : "deep";
+let mode = ["guess", "draft", "hoops"].includes(store.get("db_mode")) ? store.get("db_mode") : "deep";
 let me = { name: store.get("db_name") || null, elo: 1000, w: 0, l: 0, d: 0, rank: null };
 
 const MODES = {
   deep: { name: "Deep Ball", how: ["Same prompt for both players. 30 seconds to answer.", "Correct answers score 1–10. Forgotten deep cuts score high, famous or recent picks score low.", "Wrong or blank answers score 0. First to 3 rounds wins."] },
+  hoops: { name: "Ragdoll Hoops", how: ["Floppy 1v1 basketball. One button: tap to jump, hold to raise your arms, let go in the air to shoot.", "Let go at the top of your jump for the best shot. Jump into the rim with the ball to dunk.", "Shots from beyond the arc count 2, everything inside counts 1. First to 15 wins.", "Play the AI, or two players on one device (each takes a side of the screen)."] },
   draft: { name: "Spin & Draft", how: ["Spin the wheel to land on a random NBA team, then draft anyone who ever played for them. 25 seconds per pick.", "Build a real lineup: a PG, SG, SF, PF and C, plus a 6th man who can play anything. Two of the same position only works if one is your 6th man.", "Each player spins their own wheel, so luck matters.", "Every player is rated on his best season with that team. The better roster usually wins the best-of-7 series, but upsets happen."] },
   guess: { name: "Guess the Player", how: ["You start with the position and years played. Then a clue drops every 6 seconds, from hardest to easiest.", "First to name the player takes the round. Guess on clue 1 for 5 points, clue 5 for 1.", "Wrong guesses cost nothing, so keep firing. Most points after 5 players wins."] },
 };
@@ -29,7 +30,7 @@ async function refreshMe() {
 let online = 0;
 let pollToken = 0;
 let timer = null, clockTimer = null, matchId = null, S = null, skew = 0, view = "home", lastKey = "", rated = false;
-const stop = () => { clearInterval(timer); timer = null; clearInterval(clockTimer); clockTimer = null; pollToken++; };
+const stop = () => { clearInterval(timer); timer = null; clearInterval(clockTimer); clockTimer = null; pollToken++; if (typeof hoopsStop === "function") { hoopsStop(); hoopsStop = null; } };
 
 function nav(active) {
   const tab = (id, label) => `<button class="tab" data-go="${id}" ${active === id ? 'aria-current="page"' : ""}>${label}</button>`;
@@ -51,6 +52,7 @@ const ICON = {
   draft: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4"/></svg>',
   win: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M7 6H4a3 3 0 0 0 3 4M17 6h3a3 3 0 0 1-3 4"/></svg>',
   lose: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8 16s1.5-2 4-2 4 2 4 2M9 9.5h.01M15 9.5h.01"/></svg>',
+  hoops: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h11"/><path d="M5.5 7l1.5 6h6l1.5-6"/><path d="M8 7l1 6M12 7l-1 6"/><circle cx="18" cy="16" r="3.5"/><path d="M20 4v3"/></svg>',
   draw: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M5 9h14M5 15h14"/></svg>',
 };
 
@@ -66,18 +68,21 @@ function home(msg) {
     ${me.admin ? `<p class="troll-on">😈 Troll mode on · the button shows up during matches</p>` : ""}
     <p class="online" id="online"><i></i><span>${online ? `${online} online now` : "Checking who's online…"}</span></p>
     <div class="segcards" role="group" aria-label="Game mode">
-      ${[["deep", ICON.deep, "Deep Ball", "Name the deepest cut"], ["guess", ICON.guess, "Guess the Player", "Clues drop. Name him first."], ["draft", ICON.draft, "Spin & Draft", "Spin a team. Draft a legend."]]
+      ${[["deep", ICON.deep, "Deep Ball", "Name the deepest cut"], ["guess", ICON.guess, "Guess the Player", "Clues drop. Name him first."], ["draft", ICON.draft, "Spin & Draft", "Spin a team. Draft a legend."], ["hoops", ICON.hoops, "Ragdoll Hoops", "Floppy 1v1. First to 15."]]
         .map(([k, ic, n, sub]) => `<button class="segcard" data-mode="${k}" aria-pressed="${mode === k}"><span class="ic">${ic}</span><b>${n}</b><span class="sub">${sub}</span></button>`).join("")}
     </div>
+    ${mode === "hoops" ? `<div class="btns"><button id="hai">Play vs AI</button><button id="h2p" class="ghost">2 players · same device</button></div>` : `
     <div class="btns"><button id="find">Find match</button><button id="friend" class="ghost">Play a friend</button></div>
-    <div class="btns"><button id="bot" class="ghost">Practice vs AI</button></div>
+    <div class="btns"><button id="bot" class="ghost">Practice vs AI</button></div>`}
     ${msg ? `<p class="err">${esc(msg)}</p>` : ""}
   </div>
   <div class="panel"><span class="label">How ${esc(M.name)} works</span>
     <ul class="how">${M.how.map(h => `<li>${esc(h)}</li>`).join("")}<li>Online matches change your Elo. Practice doesn't.</li><li>No googling: leave the game for more than 5 seconds mid-round and you forfeit that round.</li></ul></div>`;
   wireNav();
   document.querySelectorAll("[data-mode]").forEach(b => b.onclick = () => { mode = b.dataset.mode; store.set("db_mode", mode); home(); });
-  $("#find").onclick = find;
+  if (mode === "hoops") {
+    $("#hai").onclick = () => hoops(true); $("#h2p").onclick = () => hoops(false);
+  } else $("#find").onclick = find;
   const tickOnline = async () => {
     if (view !== "home") return;
     try {
@@ -86,8 +91,15 @@ function home(msg) {
     } catch {}
   };
   tickOnline(); timer = setInterval(tickOnline, 20000);
-  $("#friend").onclick = friend;
-  $("#bot").onclick = async () => { try { join((await api("practice", { mode })).match); } catch (e) { home(e.message); } };
+  if ($("#friend")) $("#friend").onclick = friend;
+  if ($("#bot")) $("#bot").onclick = async () => { try { join((await api("practice", { mode })).match); } catch (e) { home(e.message); } };
+}
+
+let hoopsStop = null;
+function hoops(vsAI) {
+  stop(); view = "hoops";
+  app.innerHTML = `<div class="panel hoops-panel"></div>`;
+  hoopsStop = window.Hoops.start(app.querySelector(".hoops-panel"), { vsAI, p1: vsAI ? me.name : "Player 1", onExit: () => { hoopsStop = null; home(); } });
 }
 
 function pickName(msg) {
