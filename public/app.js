@@ -48,13 +48,13 @@ function home(msg) {
   const M = MODES[mode];
   app.innerHTML = `${nav("home")}
   <div class="panel">
-    <div class="row between"><span>Playing as <b>${esc(me.name)}</b></span><span class="mono small">${me.elo} Elo${me.rank ? ` · #${me.rank}` : ""}</span></div>
+    <span class="label">Tonight's broadcast</span>
+    <div class="pstrip"><span>${esc(me.name)}</span><span class="elo">${me.elo} ELO${me.rank ? ` · #${me.rank}` : ""}</span></div>
     ${me.admin ? `<p class="troll-on">😈 Troll mode on · the button shows up during matches</p>` : ""}
     <p class="online" id="online"><i></i><span>${online ? `${online} online now` : "Checking who's online…"}</span></p>
-    <div class="seg" role="group" aria-label="Game mode">
-      <button data-mode="deep" aria-pressed="${mode === "deep"}">Deep Ball</button>
-      <button data-mode="guess" aria-pressed="${mode === "guess"}">Guess</button>
-      <button data-mode="draft" aria-pressed="${mode === "draft"}">Spin & Draft</button>
+    <div class="segcards" role="group" aria-label="Game mode">
+      ${[["deep", "🏀", "Deep Ball", "Name the deepest cut"], ["guess", "🕵️", "Guess the Player", "Clues drop. Name him first."], ["draft", "🎡", "Spin & Draft", "Spin a team. Draft a legend."]]
+        .map(([k, ic, n, sub]) => `<button class="segcard" data-mode="${k}" aria-pressed="${mode === k}"><span class="ic">${ic}</span><b>${n}</b><span class="sub">${sub}</span></button>`).join("")}
     </div>
     <div class="btns"><button id="find">Find match</button><button id="friend" class="ghost">Play a friend</button></div>
     <div class="btns"><button id="bot" class="ghost">Practice vs AI</button></div>
@@ -917,6 +917,28 @@ async function profile(msg) {
     me.name ? profile("Welcome back, " + me.name + ".") : pickName("No player found with that code.");
   };
 }
+
+/* ---------- Broadcast ticker + clock ---------- */
+const FACTS = ["Wilt Chamberlain scored 100 points in one game (1962)", "Wilt averaged 50.4 PPG in 1961-62", "John Stockton is the all-time leader in assists and steals",
+  "Robert Horry won 7 rings", "LeBron James is the NBA's all-time leading scorer", "Russell Westbrook has the most triple-doubles ever",
+  "Manute Bol (7'7\") and Muggsy Bogues (5'3\") were teammates on the 1987-88 Bullets", "Bill Russell won 11 titles in 13 seasons", "Kareem won 6 MVPs"];
+async function ticker() {
+  const el = $("#tk"); if (!el) return;
+  let items = FACTS.map(f => `<span>${esc(f)}</span>`);
+  try {
+    const [{ players }, o] = await Promise.all([api("leaderboard"), api("online")]);
+    const top = players.slice(0, 5).map((p, i) => `<span><b>#${i + 1}</b> ${esc(p.name)} <b>${p.elo}</b></span>`);
+    items = [`<span><b>LIVE</b> ${o.online} online now</span>`, ...top, ...items];
+  } catch {}
+  items.push(`<span>Made by <a href="https://www.tiktok.com/@wyaclaw" target="_blank" rel="noopener">@wyaclaw</a> on TikTok &amp; Discord</span>`);
+  const html = items.join(""); el.innerHTML = html + html; // doubled for a seamless loop
+  el.style.setProperty("--dur", Math.max(40, items.length * 5) + "s");
+}
+function netClock() {
+  const c = $("#netclock"); if (!c) return;
+  c.textContent = new Date().toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+netClock(); setInterval(netClock, 30000); ticker(); setInterval(ticker, 120000);
 
 /* ---------- Start ---------- */
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
