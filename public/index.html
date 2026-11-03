@@ -546,9 +546,23 @@ button.ghost:hover,.tabs .tab:hover{box-shadow:none;border-color:#3a4c6a}
 .h3-poss{position:absolute;left:12px;top:40px;z-index:2;font-family:var(--display);font-weight:800;text-transform:uppercase;font-size:.95rem;letter-spacing:.06em;background:rgba(0,0,0,.5);padding:3px 10px;border-left:3px solid #ffd23a;pointer-events:none}
 .h3-stick{position:absolute;left:18px;bottom:18px;width:120px;height:120px;border-radius:50%;background:rgba(255,255,255,.12);border:2px solid rgba(255,255,255,.35);z-index:3;display:grid;place-items:center;touch-action:none}
 .h3-stick i{width:52px;height:52px;border-radius:50%;background:rgba(255,255,255,.75);box-shadow:0 4px 12px rgba(0,0,0,.4);transition:transform .05s}
-.h3-shoot{position:absolute;right:18px;bottom:22px;width:110px;height:110px;border-radius:50%!important;padding:0;z-index:3;flex:none;background:rgba(255,178,56,.92)!important;color:#16110a!important;font-size:1.2rem;touch-action:none}
-.h3-shoot svg{position:absolute;inset:-8px;width:calc(100% + 16px);height:calc(100% + 16px);transform:rotate(-90deg);pointer-events:none}
-.h3-shoot circle{fill:none;stroke:#ffb238;stroke-width:6;stroke-dasharray:289;stroke-dashoffset:289;transition:stroke .1s}
+.h3-stick{width:104px!important;height:104px!important;left:14px!important;bottom:14px!important}
+.h3-shoot{position:absolute;right:14px;bottom:18px;width:96px;height:96px;border-radius:50%!important;padding:0;z-index:3;flex:none;background:rgba(255,178,56,.94)!important;color:#16110a!important;font-size:1.15rem;touch-action:none;display:grid;place-content:center;line-height:1}
+.h3-shoot small{font-family:var(--mono);font-size:.62rem;opacity:.7}
+.h3-moves{position:absolute;right:118px;bottom:14px;z-index:3;display:grid;grid-template-columns:repeat(2,52px);gap:6px}
+.h3-moves.off{opacity:.25;pointer-events:none}
+.h3-mv{width:52px;height:46px;padding:0;border-radius:10px!important;font-size:.72rem;letter-spacing:.02em;background:rgba(10,17,28,.72)!important;color:#fff!important;border:1px solid rgba(255,255,255,.35)!important;display:grid;place-content:center;line-height:1.05;touch-action:none;flex:none}
+.h3-mv small{font-family:var(--mono);font-size:.55rem;opacity:.6}
+/* 2K-style shot meter with a green window */
+.h3-meter{position:absolute;z-index:4;width:16px;height:120px;border-radius:8px;background:rgba(0,0,0,.55);border:2px solid rgba(255,255,255,.85);overflow:hidden;opacity:0;transition:opacity .1s;pointer-events:none}
+.h3-meter.on{opacity:1}
+.h3-meter i{position:absolute;left:0;right:0;display:block}
+.h3-green{background:#3ad46b;box-shadow:0 0 10px #3ad46b;opacity:.95}
+.h3-fill{bottom:0;background:linear-gradient(0deg,#ffd23a,#fff);mix-blend-mode:normal;opacity:.85;border-top:2px solid #fff}
+.h3-fill.in{background:linear-gradient(0deg,#3ad46b,#bfffcf)}
+.h3-fb{position:absolute;left:50%;top:34%;transform:translate(-50%,0) scale(.8);z-index:4;font-family:var(--display);font-weight:800;font-size:1.6rem;letter-spacing:.06em;text-transform:uppercase;opacity:0;transition:opacity .15s,transform .15s;pointer-events:none;text-shadow:0 3px 14px rgba(0,0,0,.8)}
+.h3-fb.on{opacity:1;transform:translate(-50%,0) scale(1)}
+.h3-fb.g{color:#3ad46b}.h3-fb.r{color:#ff8a5c}
 .h3-wrap .hp-msg{z-index:4;top:22%}
 .h3-wrap .hp-end{z-index:5}
 </style>

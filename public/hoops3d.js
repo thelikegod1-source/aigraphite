@@ -1,10 +1,13 @@
-// Street Hoops 3D: 1v1 half-court streetball vs AI. Joystick to move, hold Shoot to jump,
-// release at the top for a clean shot. Beyond the arc = 2, inside = 1. First to 15.
+// Street Hoops 3D: 1v1 half-court streetball vs AI.
+// Move with the joystick/WASD. Hold Shoot (E or Space) and let go in the green window of the meter.
+// Dribble moves: Q crossover, X behind the back, F spin, C step back. Beyond the arc = 2, inside = 1. First to 15.
 import * as THREE from "./vendor/three.module.min.js";
 
 const RIM = new THREE.Vector3(0, 3.05, 0), RIM_R = 0.23, BALL_R = 0.12, BOARD_Z = -0.38;
 const ARC = 6.75, GRAV = 9.8, TO_WIN = 15, COURT_X = 7.5, COURT_Z = 13.5;
-const SPEED = 5.2, JUMP_V = 5.0;
+const SPEED = 5.2, JUMP_V = 5.0, METER_TIME = 0.62, GREEN_C = 0.86;
+const MOVES = { cross: { key: "KeyQ", label: "Cross", dur: 0.34, burst: 4.6 }, behind: { key: "KeyX", label: "Behind", dur: 0.4, burst: 4.2 },
+  spin: { key: "KeyF", label: "Spin", dur: 0.5, burst: 4.8 }, stepback: { key: "KeyC", label: "Step back", dur: 0.36, burst: 4.4 } };
 
 export function start(root, opts) {
   root.innerHTML = `<div class="h3">
@@ -15,10 +18,13 @@ export function start(root, opts) {
       <div class="h3-banner"><div class="h3-run">STREET HOOPS · 1V1 · FIRST TO 15 · DEEP BALL · STREET HOOPS · 1V1 · FIRST TO 15 · DEEP BALL ·</div></div>
       <div class="hp-msg" id="hmsg"></div>
       <div class="h3-poss" id="hposs"></div>
+      <div class="h3-meter" id="hmeterbar" aria-hidden="true"><i class="h3-green" id="hgreen"></i><i class="h3-fill" id="hfill"></i></div>
+      <div class="h3-fb" id="hfb"></div>
       <div class="h3-stick" id="hstick"><i id="hknob"></i></div>
-      <button class="h3-shoot" id="hshoot" aria-label="Shoot, block or steal"><span id="hlbl">Shoot</span><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="46" id="hmeter"/></svg></button>
+      <div class="h3-moves" id="hmoves">${Object.entries(MOVES).map(([k, m]) => `<button class="h3-mv" data-mv="${k}" aria-label="${m.label}">${m.label}<small>${m.key.slice(3)}</small></button>`).join("")}</div>
+      <button class="h3-shoot" id="hshoot" aria-label="Shoot, block or steal"><span id="hlbl">Shoot</span><small>E</small></button>
     </div>
-    <p class="small hp-help">Move: joystick or WASD · Shoot: hold the button or Space, let go at the top of your jump · On defense the button blocks (or steals up close)</p>
+    <p class="small hp-help">Move: joystick or WASD · Shoot: hold E (or the button), let go in the <b style="color:var(--win)">green</b> · Moves: Q cross · X behind the back · F spin · C step back · On defense E blocks or steals</p>
     <div class="btns"><button class="ghost" id="hquit">Quit</button></div></div>`;
   const wrap = root.querySelector("#h3wrap");
 
@@ -32,42 +38,44 @@ export function start(root, opts) {
   const scene = new THREE.Scene();
   scene.background = skyTexture(); scene.fog = new THREE.Fog(0xe9b98a, 30, 80);
   const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 200);
-  const hemi = new THREE.HemisphereLight(0xffe2b8, 0x3a2a20, 0.9); scene.add(hemi);
+  scene.add(new THREE.HemisphereLight(0xffe2b8, 0x3a2a20, 0.9));
   const sun = new THREE.DirectionalLight(0xffc98a, 2.2); sun.position.set(-12, 18, 10); sun.castShadow = true;
   sun.shadow.mapSize.set(1024, 1024); Object.assign(sun.shadow.camera, { left: -16, right: 16, top: 16, bottom: -16, near: 1, far: 60 }); scene.add(sun);
-
   buildCourt(scene); buildCity(scene); buildHoop(scene);
 
   // ---------- players + ball ----------
-  const players = [makePlayer(0x2f62d8, 0x1b2a55), makePlayer(0xd23b3b, 0x4a1212)];
+  const players = [makePlayer(0, { jersey: 0x2f62d8, trim: 0xffffff, shorts: 0x1d3f99, skin: 0xb9805a, hair: 0x1a120c, num: "1" }),
+                   makePlayer(1, { jersey: 0xd23b3b, trim: 0x111111, shorts: 0x8f1f1f, skin: 0x7a4b2e, hair: 0x0d0a08, num: "23" })];
   players.forEach(p => scene.add(p.group));
   const ring = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.72, 48), new THREE.MeshBasicMaterial({ color: 0xffd23a, transparent: true, opacity: 0.9 }));
   ring.rotation.x = -Math.PI / 2; ring.position.y = 0.02; scene.add(ring);
   const ballMesh = new THREE.Mesh(new THREE.SphereGeometry(BALL_R, 24, 16), new THREE.MeshStandardMaterial({ map: ballTexture(), roughness: 0.7 }));
   ballMesh.castShadow = true; scene.add(ballMesh);
   const arcDots = new THREE.Group(); scene.add(arcDots);
-  for (let i = 0; i < 18; i++) { const d = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 })); arcDots.add(d); }
+  for (let i = 0; i < 18; i++) arcDots.add(new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 })));
   arcDots.visible = false;
 
   const ball = { p: new THREE.Vector3(), v: new THREE.Vector3(), holder: null, shot: null, cool: 0, spin: 0 };
   let score = [0, 0], offense = 0, pause = 0, over = false, last = performance.now(), raf = 0, t = 0, possClock = 12;
-  const input = { x: 0, z: 0, shoot: false, wasShoot: false };
-  const ai = { thinkAt: 0, target: new THREE.Vector3(), shootAt: 0, holdUntil: 0, jumpCool: 0 };
+  const input = { x: 0, z: 0, shoot: false, wasShoot: false, move: null };
+  const ai = { thinkAt: 0, target: new THREE.Vector3(), shootAt: 0, holdUntil: 0, jumpCool: 0, releaseAt: 0.86, moveCool: 0 };
+  const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3();
 
   const msg = (txt, ms = 1100) => { const m = root.querySelector("#hmsg"); m.textContent = txt; m.classList.add("on"); clearTimeout(msg.t); msg.t = setTimeout(() => m.classList.remove("on"), ms); };
+  const feedback = (txt, cls) => { const f = root.querySelector("#hfb"); f.textContent = txt; f.className = "h3-fb on " + (cls || ""); clearTimeout(feedback.t); feedback.t = setTimeout(() => f.classList.remove("on"), 900); };
   function setupPossession(team) {
     offense = team;
     const off = players[team], def = players[1 - team];
     off.pos.set((Math.random() - .5) * 2, 0, 9.2); def.pos.set(0, 0, 5.2);
-    for (const p of players) { p.vel.set(0, 0, 0); p.y = 0; p.vy = 0; p.shooting = false; p.hasBall = false; }
-    off.hasBall = true; ball.holder = off; ball.shot = null; ball.cool = 0;
-    root.querySelector("#hposs").textContent = team === 0 ? "Your ball" : "Defense";
+    for (const p of players) Object.assign(p, { y: 0, vy: 0, shooting: false, dunking: false, hasBall: false, move: null, stumble: 0, meter: 0 }) && p.vel.set(0, 0, 0);
+    off.hasBall = true; off.hand = 1; ball.holder = off; ball.shot = null; ball.cool = 0;
     root.querySelector("#hlbl").textContent = team === 0 ? "Shoot" : "Block";
-    ai.thinkAt = 0; ai.shootAt = 0; possClock = 12;
+    root.querySelector("#hmoves").classList.toggle("off", team !== 0);
+    ai.thinkAt = 0; ai.shootAt = 0; ai.holdUntil = 0; possClock = 12;
   }
   setupPossession(0);
 
-  // ---------- input: joystick + button + keys ----------
+  // ---------- input ----------
   const stick = root.querySelector("#hstick"), knob = root.querySelector("#hknob");
   let stickId = null;
   const stickMove = e => {
@@ -82,150 +90,184 @@ export function start(root, opts) {
   const btn = root.querySelector("#hshoot");
   btn.addEventListener("pointerdown", e => { e.preventDefault(); btn.setPointerCapture?.(e.pointerId); input.shoot = true; });
   ["pointerup", "pointercancel", "lostpointercapture"].forEach(ev => btn.addEventListener(ev, () => { input.shoot = false; }));
+  root.querySelectorAll("[data-mv]").forEach(b => b.addEventListener("pointerdown", e => { e.preventDefault(); input.move = b.dataset.mv; }));
   const keys = {}; const onKey = e => {
     const down = e.type === "keydown";
     if (["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code)) { keys[e.code] = down; e.preventDefault(); }
-    if (e.code === "Space") { input.shoot = down; e.preventDefault(); }
+    if (e.code === "KeyE" || e.code === "Space") { input.shoot = down; e.preventDefault(); }
+    if (down && !e.repeat) for (const [k, m] of Object.entries(MOVES)) if (e.code === m.key) { input.move = k; e.preventDefault(); }
   };
   addEventListener("keydown", onKey); addEventListener("keyup", onKey);
 
   // ---------- helpers ----------
   const flat = v => new THREE.Vector3(v.x, 0, v.z);
   const distToRim = p => Math.hypot(p.x - RIM.x, p.z - RIM.z);
-  function release(pl, perfect) {
-    // aim at the rim with an error that depends on timing, distance and how close the defender is
-    const from = new THREE.Vector3(pl.pos.x, 2.0 + pl.y, pl.pos.z), d = distToRim(pl.pos);
-    const def = players[1 - pl.team], gap = flat(def.pos).distanceTo(flat(pl.pos));
-    // contest: 0 (wide open) to 1 (hand in your face mid-jump)
-    const contest = gap < 1.6 ? (def.y > 0.25 ? 1 : 0.5) * (1 - gap / 1.6) : 0;
-    // error in meters off the rim center; the ball fits through with ~0.1m to spare
-    const err = (1 - perfect) * 0.22 + d * 0.006 + contest * 0.18 + Math.abs(Math.random() + Math.random() - 1) * 0.05;
+  const fwdOf = p => new THREE.Vector3(Math.sin(p.facing), 0, Math.cos(p.facing));
+  const greenWidth = pl => { const d = distToRim(pl.pos), o = players[1 - pl.team], gap = flat(o.pos).distanceTo(flat(pl.pos));
+    const contest = gap < 1.6 && !o.stumble ? (1 - gap / 1.6) : 0; return Math.max(0.035, 0.13 - d * 0.006 - contest * 0.06 + (pl.space > t ? 0.04 : 0)); };
+  function release(pl) {
+    const from = handsMid(pl), d = distToRim(pl.pos), def = players[1 - pl.team], gap = flat(def.pos).distanceTo(flat(pl.pos));
+    const contest = def.stumble ? 0 : gap < 1.6 ? (def.y > 0.25 ? 1 : 0.5) * (1 - gap / 1.6) : 0;
+    const m = pl.meter, w = greenWidth(pl), off = Math.abs(m - GREEN_C), green = off <= w / 2;
+    const quality = green ? 1 : Math.max(0, 1 - (off - w / 2) * 3);
+    const err = green ? 0.012 + contest * 0.05 : (1 - quality) * 0.26 + d * 0.006 + contest * 0.18 + Math.abs(Math.random() + Math.random() - 1) * 0.05;
+    if (pl.team === 0) { if (green) { feedback("GREEN!", "g"); buzz(25); tone(880, .08, "triangle", .1); tone(1320, .12, "triangle", .08, .06); } else feedback(m < GREEN_C ? (off > .2 ? "VERY EARLY" : "SLIGHTLY EARLY") : (off > .12 ? "VERY LATE" : "SLIGHTLY LATE"), "r"); }
     const a = Math.random() * Math.PI * 2, target = RIM.clone().add(new THREE.Vector3(Math.cos(a) * err, 0.02, Math.sin(a) * err + 0.02));
-    const T = 0.75 + d * 0.06, v = target.clone().sub(from).sub(new THREE.Vector3(0, -0.5 * GRAV * T * T, 0)).divideScalar(T);
-    ball.p.copy(from); ball.v.copy(v); ball.holder = null; pl.hasBall = false; ball.cool = 0.35;
+    const T = 0.75 + d * 0.06, v = target.clone().sub(from).add(new THREE.Vector3(0, 0.5 * GRAV * T * T, 0)).divideScalar(T);
+    ball.p.copy(from); ball.v.copy(v); ball.holder = null; pl.hasBall = false; ball.cool = 0.35; pl.released = t;
     ball.shot = { team: pl.team, value: d > ARC ? 2 : 1 };
-    tone(330, .06, "triangle", .08);
+    pl.shooting = false; pl.meter = 0; tone(330, .06, "triangle", .08);
   }
   function dunk(pl) {
-    ball.holder = null; pl.hasBall = false; ball.p.set(RIM.x, RIM.y + 0.35, RIM.z + 0.05); ball.v.set(0, -4, 0); ball.cool = 0.5;
-    ball.shot = { team: pl.team, value: 1, dunk: true }; pl.vy = Math.max(pl.vy, 2.5); buzz(40); tone(140, .12, "sawtooth", .12);
+    ball.holder = null; pl.hasBall = false; ball.p.set(RIM.x, RIM.y + 0.35, RIM.z + 0.05); ball.v.set(0, -4, 0); ball.cool = 0.5; pl.slam = t;
+    ball.shot = { team: pl.team, value: 1, dunk: true }; pl.vy = Math.max(pl.vy, 2.5); pl.shooting = false; pl.dunking = false; buzz(40); tone(140, .12, "sawtooth", .12);
   }
   function scored(team, val, dunked) {
     score[team] += val; root.querySelector("#hs" + team).textContent = score[team];
     msg(dunked ? "DUNK! +1" : val === 2 ? "+2 FROM DEEP" : "+1", 1200);
     (team === 0 ? SFX.roundWin : SFX.roundLoss)(); buzz(30); pause = 1.3;
     if (score[team] >= TO_WIN) return finish(team);
-    setTimeout(() => !over && setupPossession(1 - team), 1100); // loser's ball (alternating possession)
+    setTimeout(() => !over && setupPossession(1 - team), 1100);
   }
   function turnover(to, why) { msg(why, 900); pause = 0.9; setTimeout(() => !over && setupPossession(to), 800); }
+  function doMove(pl, kind) {
+    if (!pl.hasBall || pl.shooting || pl.y > 0 || pl.move || (pl.moveCool || 0) > t) return;
+    const M = MOVES[kind], fwd = fwdOf(pl), side = new THREE.Vector3(fwd.z, 0, -fwd.x);
+    let dir;
+    if (kind === "cross") { pl.hand = 1 - pl.hand; dir = side.clone().multiplyScalar(pl.hand ? -1 : 1).addScaledVector(fwd, 0.35); }
+    else if (kind === "behind") { pl.hand = 1 - pl.hand; dir = side.clone().multiplyScalar(pl.hand ? -0.8 : 0.8).addScaledVector(fwd, 0.6); }
+    else if (kind === "spin") { const s = Math.random() < .5 ? 1 : -1; pl.spinDir = s; dir = fwd.clone().addScaledVector(side, s * 0.8); }
+    else { dir = fwd.clone().multiplyScalar(-1); pl.space = t + 1.4; }
+    pl.move = { kind, t0: t, dur: M.dur, dir: dir.normalize(), from: pl.hand }; pl.moveCool = t + M.dur + 0.25;
+    tone(kind === "spin" ? 260 : 420, .05, "triangle", .07);
+    // ankle breaker: defender close and caught leaning
+    const o = players[1 - pl.team], gap = flat(o.pos).distanceTo(flat(pl.pos)), chance = { cross: .28, behind: .22, spin: .32, stepback: .22 }[kind];
+    if (gap < 1.5 && !o.stumble && o.y === 0 && Math.random() < chance) { o.stumble = t + 0.95; if (pl.team === 0) { msg("ANKLES!", 1000); buzz([20, 30, 20]); } }
+  }
 
-  // ---------- per-frame ----------
+  // ---------- simulation ----------
   function stepPlayer(pl, dt, moveX, moveZ, shootDown, shootWas) {
-    const ground = pl.y <= 0.001;
-    // move relative to camera: forward = toward the hoop
+    const ground = pl.y <= 0.001, o = players[1 - pl.team];
     const fwd = flat(RIM.clone().sub(camera.position)).normalize(), right = new THREE.Vector3(-fwd.z, 0, fwd.x);
-    const want = fwd.multiplyScalar(-moveZ).add(right.multiplyScalar(moveX));
-    if (want.lengthSq() > 1) want.normalize();
-    const sp = (pl.hasBall ? SPEED * 0.88 : SPEED) * (ground ? 1 : 0.35);
-    pl.vel.lerp(want.multiplyScalar(sp), ground ? 0.25 : 0.05);
+    const want = fwd.multiplyScalar(-moveZ).add(right.multiplyScalar(moveX)); if (want.lengthSq() > 1) want.normalize();
+    let sp = (pl.hasBall ? SPEED * 0.9 : SPEED) * (ground ? 1 : 0.3);
+    if (pl.stumble > t) sp *= 0.08;
+    if (pl.shooting && ground) sp *= 0.2;
+    if (pl.move) { const k = (t - pl.move.t0) / pl.move.dur; if (k >= 1) pl.move = null; else { pl.vel.copy(pl.move.dir).multiplyScalar(MOVES[pl.move.kind].burst * (1 - k * 0.5)); } }
+    if (!pl.move) pl.vel.lerp(want.multiplyScalar(sp), ground ? 0.25 : 0.05);
     pl.pos.addScaledVector(pl.vel, dt);
     pl.pos.x = Math.max(-COURT_X, Math.min(COURT_X, pl.pos.x)); pl.pos.z = Math.max(-1.2, Math.min(COURT_Z, pl.pos.z));
     const press = shootDown && !shootWas, rel = !shootDown && shootWas;
-    if (press && ground) {
-      if (pl.hasBall && distToRim(pl.pos) < 1.9) { pl.vy = JUMP_V * 1.15; pl.dunking = true; pl.shooting = true; } // releasing early = layup
-      else { pl.vy = JUMP_V; pl.shooting = pl.hasBall; }
-      // defense: reach for a steal when close and the handler isn't shooting
-      const o = players[1 - pl.team];
-      if (!pl.hasBall && o.hasBall && !o.shooting && flat(o.pos).distanceTo(flat(pl.pos)) < 1.1 && Math.random() < 0.3) {
-        o.hasBall = false; pl.hasBall = true; ball.holder = pl; msg("STOLEN!", 900); tone(600, .07, "square", .06);
-        turnover(pl.team, "STOLEN!");
+    if (press && ground && !(pl.stumble > t)) {
+      if (pl.hasBall && distToRim(pl.pos) < 1.9) { pl.vy = JUMP_V * 1.15; pl.dunking = true; pl.shooting = true; pl.meter = 0; pl.shotT = t; }
+      else if (pl.hasBall) { pl.shooting = true; pl.meter = 0; pl.shotT = t; pl.move = null; pl.jumpAt = t + 0.1; } // gather, then rise
+      else {
+        pl.vy = JUMP_V * 0.9; pl.blockT = t;
+        if (o.hasBall && !o.shooting && flat(o.pos).distanceTo(flat(pl.pos)) < 1.1 && Math.random() < 0.3) {
+          o.hasBall = false; pl.hasBall = true; pl.hand = 1; ball.holder = pl; tone(600, .07, "square", .06); turnover(pl.team, "STOLEN!");
+        }
       }
     }
-    if (!ground || pl.vy > 0) { pl.vy -= GRAV * dt; pl.y = Math.max(0, pl.y + pl.vy * dt); if (pl.y === 0) { pl.vy = 0; pl.shooting = false; pl.dunking = false; } }
-    if (pl.dunking && pl.hasBall) { // glide toward the rim, slam it when close enough
-      const toRim = new THREE.Vector3(RIM.x - pl.pos.x, 0, RIM.z + 0.45 - pl.pos.z); pl.pos.addScaledVector(toRim, Math.min(1, dt * 3));
+    if (pl.jumpAt && t >= pl.jumpAt) { pl.vy = JUMP_V; pl.jumpAt = 0; }
+    if (!ground || pl.vy > 0) { pl.vy -= GRAV * dt; pl.y = Math.max(0, pl.y + pl.vy * dt); if (pl.y === 0) { pl.vy = 0; if (!pl.hasBall) pl.shooting = false; pl.dunking = false; } }
+    if (pl.dunking && pl.hasBall) {
+      pl.pos.addScaledVector(new THREE.Vector3(RIM.x - pl.pos.x, 0, RIM.z + 0.45 - pl.pos.z), Math.min(1, dt * 3));
       if (pl.y > 0.7 && distToRim(pl.pos) < 1.0) dunk(pl);
     }
-    if (pl.shooting && pl.hasBall && rel) { const perfect = 1 - Math.min(1, Math.abs(pl.vy) / JUMP_V); release(pl, perfect); pl.shooting = false; }
-    if (pl.hasBall && ground && rel && !pl.shooting) { /* tap without jumping: nothing */ }
-    // face movement direction (or the hoop when holding the ball still)
-    const face = pl.vel.lengthSq() > 0.3 ? Math.atan2(pl.vel.x, pl.vel.z) : Math.atan2(RIM.x - pl.pos.x, RIM.z - pl.pos.z);
+    if (pl.shooting && pl.hasBall && !pl.dunking) {
+      pl.meter += dt / METER_TIME;
+      if (rel || pl.meter >= 1.05) release(pl);
+    } else if (pl.dunking && pl.hasBall && rel) { pl.dunking = false; pl.meter = GREEN_C - 0.05; release(pl); } // let go early: layup
+    // facing: toward motion, or the hoop when shooting / holding
+    const face = pl.move?.kind === "stepback" ? Math.atan2(RIM.x - pl.pos.x, RIM.z - pl.pos.z)
+      : pl.vel.lengthSq() > 0.3 && !pl.shooting ? Math.atan2(pl.vel.x, pl.vel.z)
+      : pl.hasBall || pl.shooting ? Math.atan2(RIM.x - pl.pos.x, RIM.z - pl.pos.z) : Math.atan2(o.pos.x - pl.pos.x, o.pos.z - pl.pos.z);
     pl.facing += Math.atan2(Math.sin(face - pl.facing), Math.cos(face - pl.facing)) * 0.2;
   }
+  function handsMid(pl) { pl.group.updateMatrixWorld(true); pl.handL.getWorldPosition(tmp); pl.handR.getWorldPosition(tmp2); return tmp.clone().add(tmp2).multiplyScalar(0.5).add(new THREE.Vector3(0, 0.12, 0)); }
   function stepBall(dt) {
     if (ball.holder) {
-      const pl = ball.holder, side = new THREE.Vector3(Math.cos(pl.facing), 0, -Math.sin(pl.facing)).multiplyScalar(0.42);
-      const dribble = pl.y > 0 || pl.shooting ? 1.9 + pl.y : 0.15 + Math.abs(Math.sin(t * 8)) * 0.75;
-      ball.p.set(pl.pos.x + side.x, dribble, pl.pos.z + side.z); return;
+      const pl = ball.holder; pl.group.updateMatrixWorld(true);
+      if (pl.shooting || pl.dunking || pl.y > 0) { ball.p.copy(pl.dunking ? (pl.handR.getWorldPosition(tmp), tmp.add(new THREE.Vector3(0, .1, 0))) : handsMid(pl)); return; }
+      if (pl.move && (pl.move.kind === "cross" || pl.move.kind === "behind")) {
+        const k = Math.min(1, (t - pl.move.t0) / pl.move.dur), a = pl.hands[pl.move.from], b = pl.hands[1 - pl.move.from];
+        a.getWorldPosition(tmp); b.getWorldPosition(tmp2);
+        ball.p.lerpVectors(tmp, tmp2, k); ball.p.y = 0.15 + (Math.max(tmp.y, tmp2.y) - 0.15) * Math.abs(Math.cos(Math.PI * k));
+        if (pl.move.kind === "behind") ball.p.addScaledVector(fwdOf(pl), -0.35 * Math.sin(Math.PI * k));
+        return;
+      }
+      // dribble: hand → floor → hand, synced with the arm animation
+      pl.hands[pl.hand].getWorldPosition(tmp);
+      const u = (pl.drib % 1), b = Math.abs(Math.cos(Math.PI * u));
+      ball.p.set(tmp.x, 0.13 + (tmp.y - 0.17) * b, tmp.z);
+      if (u > 0.47 && u < 0.53 && !pl.bounced) { pl.bounced = true; if (pl.team === 0) tone(95, .04, "sine", .05); } else if (u < 0.4) pl.bounced = false;
+      return;
     }
-    // exact projectile step (no drift): p += v*dt + ½a*dt², then v += a*dt
     const prevY = ball.p.y; ball.p.addScaledVector(ball.v, dt); ball.p.y -= 0.5 * GRAV * dt * dt; ball.v.y -= GRAV * dt; ball.spin += dt * 8;
-    // backboard
     if (ball.p.z - BALL_R < BOARD_Z && ball.p.z > BOARD_Z - 0.3 && Math.abs(ball.p.x) < 0.9 && ball.p.y > 2.9 && ball.p.y < 4.0) { ball.p.z = BOARD_Z + BALL_R; ball.v.z = Math.abs(ball.v.z) * 0.6; tone(220, .04, "square", .05); }
-    // rim (torus): push away from the closest point on the ring
-    const rel = new THREE.Vector3(ball.p.x - RIM.x, 0, ball.p.z - RIM.z); const rl = rel.length() || 1e-6;
-    const closest = new THREE.Vector3(RIM.x + rel.x / rl * RIM_R, RIM.y, RIM.z + rel.z / rl * RIM_R);
-    const n = ball.p.clone().sub(closest), nd = n.length();
-    if (nd < BALL_R + 0.02 && nd > 0) {
-      n.divideScalar(nd); ball.p.copy(closest).addScaledVector(n, BALL_R + 0.02);
-      const vn = ball.v.dot(n); if (vn < 0) { ball.v.addScaledVector(n, -1.55 * vn).multiplyScalar(0.8); tone(700, .03, "triangle", .05); }
-    }
-    // through the net
+    const rel = new THREE.Vector3(ball.p.x - RIM.x, 0, ball.p.z - RIM.z), rl = rel.length() || 1e-6;
+    const closest = new THREE.Vector3(RIM.x + rel.x / rl * RIM_R, RIM.y, RIM.z + rel.z / rl * RIM_R), n = ball.p.clone().sub(closest), nd = n.length();
+    if (nd < BALL_R + 0.02 && nd > 0) { n.divideScalar(nd); ball.p.copy(closest).addScaledVector(n, BALL_R + 0.02); const vn = ball.v.dot(n); if (vn < 0) { ball.v.addScaledVector(n, -1.55 * vn).multiplyScalar(0.8); tone(700, .03, "triangle", .05); } }
     if (prevY >= RIM.y && ball.p.y < RIM.y && Math.hypot(ball.p.x - RIM.x, ball.p.z - RIM.z) < RIM_R - 0.05 && ball.v.y < 0 && pause <= 0) {
-      const s = ball.shot || { team: offense, value: 1 }; ball.v.multiplyScalar(0.3); scored(s.team, s.value, s.dunk); ball.shot = null;
+      const s = ball.shot || { team: offense, value: 1 }; ball.v.multiplyScalar(0.3); netSwish = t; scored(s.team, s.value, s.dunk); ball.shot = null;
     }
-    // floor
     if (ball.p.y < BALL_R) { ball.p.y = BALL_R; if (ball.v.y < -1) tone(110, .05, "sine", .07); ball.v.y = Math.abs(ball.v.y) * 0.68; ball.v.x *= 0.92; ball.v.z *= 0.92; }
     if (ball.cool > 0) ball.cool -= dt;
-    // out of bounds
     if (pause <= 0 && (Math.abs(ball.p.x) > COURT_X + 0.6 || ball.p.z > COURT_Z + 0.6 || ball.p.z < -1.8)) { ball.v.set(0, 0, 0); turnover(1 - offense, "OUT OF BOUNDS"); return; }
-    // pick up loose balls / rebounds
     if (pause <= 0 && ball.cool <= 0) for (const pl of players) {
-      // grab it if it's within reach: close horizontally and anywhere from the floor up to raised hands
+      if (pl.stumble > t) continue;
       if (Math.hypot(ball.p.x - pl.pos.x, ball.p.z - pl.pos.z) < 0.75 && ball.p.y < 2.5 + pl.y) {
-        ball.holder = pl; pl.hasBall = true; players[1 - pl.team].hasBall = false; ball.shot = null;
-        if (pl.team === 1) { ai.shootAt = 0; ai.thinkAt = 0; } // AI gets a fresh plan after any rebound
+        ball.holder = pl; pl.hasBall = true; pl.hand = 1; pl.shooting = false; players[1 - pl.team].hasBall = false; ball.shot = null;
+        if (pl.team === 1) { ai.shootAt = 0; ai.thinkAt = 0; ai.holdUntil = 0; }
         possClock = 12;
         if (pl.team !== offense) turnover(pl.team, pl.team === 0 ? "REBOUND · YOUR BALL" : "THEIR REBOUND");
         break;
       }
     }
   }
+  let netSwish = -9;
   function aiStep(dt, me, you) {
     let mx = 0, mz = 0, shoot = false;
-    const toV = (p) => { const camFwd = flat(RIM.clone().sub(camera.position)).normalize(), right = new THREE.Vector3(-camFwd.z, 0, camFwd.x), d = flat(p.clone().sub(me.pos)); const l = d.length(); if (l < 0.25) return [0, 0]; d.divideScalar(Math.max(1, l)); return [d.dot(right), -d.dot(camFwd)]; };
+    const toV = p => { const camFwd = flat(RIM.clone().sub(camera.position)).normalize(), right = new THREE.Vector3(-camFwd.z, 0, camFwd.x), d = flat(p.clone().sub(me.pos)); const l = d.length(); if (l < 0.25) return [0, 0]; d.divideScalar(Math.max(1, l)); return [d.dot(right), -d.dot(camFwd)]; };
+    if (me.stumble > t) return [0, 0, false];
     if (me.hasBall) {
       if (t > ai.thinkAt) { ai.thinkAt = t + 0.8 + Math.random(); const ang = (Math.random() - .5) * 2.4, r = Math.random() < .35 ? 7.2 : 1.2 + Math.random() * 4; ai.target.set(Math.sin(ang) * r, 0, Math.cos(ang) * r + 0.4); if (!ai.shootAt) ai.shootAt = t + 1.4 + Math.random() * 2.5; }
       [mx, mz] = toV(ai.target);
-      if (t > ai.shootAt && me.y === 0) { ai.holdUntil = t + 0.32 + (Math.random() - .5) * 0.18; ai.shootAt = t + 99; }
-      shoot = t < ai.holdUntil;
+      const gap = flat(you.pos).distanceTo(flat(me.pos));
+      if (gap < 1.4 && t > ai.moveCool && Math.random() < dt * 1.2) { doMove(me, ["cross", "behind", "spin", "stepback"][Math.random() * 4 | 0]); ai.moveCool = t + 1.2; }
+      if (t > ai.shootAt && me.y === 0 && !me.shooting) { ai.holdUntil = t + 99; ai.shootAt = t + 99; ai.releaseAt = GREEN_C + (Math.random() - .5) * 0.22; }
+      shoot = t < ai.holdUntil && !(me.shooting && me.meter >= ai.releaseAt);
+      if (me.shooting && me.meter >= ai.releaseAt) ai.holdUntil = 0;
     } else if (!ball.holder) { [mx, mz] = toV(ball.p); }
-    else { // defense: stay between the ball handler and the hoop, jump at shooters
+    else {
       const toHoop = new THREE.Vector3(RIM.x - you.pos.x, 0, RIM.z - you.pos.z).normalize();
-      const guard = you.pos.clone().addScaledVector(toHoop, 0.95); [mx, mz] = toV(guard); // body up, about an arm's length off
+      [mx, mz] = toV(you.pos.clone().addScaledVector(toHoop, 0.95));
       const gap = flat(you.pos).distanceTo(flat(me.pos));
       if (you.shooting && gap < 2 && me.y === 0 && t > ai.jumpCool) { shoot = true; ai.jumpCool = t + 1.2; ai.holdUntil = t + 0.2; }
-      else if (!you.shooting && gap < 1.0 && me.y === 0 && t > ai.jumpCool && Math.random() < dt * 0.9) { shoot = true; ai.jumpCool = t + 1.5; ai.holdUntil = t + 0.12; } // reach in
+      else if (!you.shooting && gap < 1.0 && me.y === 0 && t > ai.jumpCool && Math.random() < dt * 0.9) { shoot = true; ai.jumpCool = t + 1.5; ai.holdUntil = t + 0.12; }
       shoot = shoot || t < ai.holdUntil;
     }
     return [mx * 0.85, mz * 0.85, shoot];
   }
   const aiPrev = { shoot: false };
+
+  // ---------- frame ----------
+  const meterBar = root.querySelector("#hmeterbar"), meterFill = root.querySelector("#hfill"), meterGreen = root.querySelector("#hgreen");
   function frame(now) {
     const dt = Math.min(0.033, (now - last) / 1000); last = now; t += dt;
     resize();
     if (!over) {
       if (pause > 0) pause -= dt;
       const kx = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0), kz = (keys.KeyS || keys.ArrowDown ? 1 : 0) - (keys.KeyW || keys.ArrowUp ? 1 : 0);
-      const mx = input.x || kx, mz = input.z || kz;
       if (pause <= 0) {
-        stepPlayer(players[0], dt, mx, mz, input.shoot, input.wasShoot);
+        if (input.move) { doMove(players[0], input.move); input.move = null; }
+        stepPlayer(players[0], dt, input.x || kx, input.z || kz, input.shoot, input.wasShoot);
         const [ax, az, as] = aiStep(dt, players[1], players[0]); stepPlayer(players[1], dt, ax, az, as, aiPrev.shoot); aiPrev.shoot = as;
-        // bump
         const a = players[0], b = players[1], d = flat(a.pos).sub(flat(b.pos)), l = d.length();
         if (l < 0.75 && l > 0) { d.divideScalar(l).multiplyScalar((0.75 - l) / 2); a.pos.add(d); b.pos.sub(d); }
-      }
+      } else input.move = null;
       input.wasShoot = input.shoot;
+      for (const p of players) animatePlayer(p, t, dt, players[1 - p.team]);
       stepBall(dt);
       if (pause <= 0 && ball.holder) {
         possClock -= dt;
@@ -233,33 +275,36 @@ export function start(root, opts) {
         if (possClock <= 0) { turnover(1 - offense, "SHOT CLOCK!"); tone(180, .4, "sawtooth", .15); }
       }
     }
-    // visuals
-    for (const p of players) animatePlayer(p, t);
     ballMesh.position.copy(ball.p); ballMesh.rotation.set(ball.spin, ball.spin * .7, 0);
-    const me = players[0]; ring.position.set(me.pos.x, 0.02, me.pos.z); ring.material.opacity = 0.65 + Math.sin(t * 6) * 0.25;
-    ring.scale.setScalar(me.hasBall ? 1.1 : 1);
-    // shot arc preview while charging
-    arcDots.visible = me.hasBall && me.shooting;
+    const me = players[0]; ring.position.set(me.pos.x, 0.02, me.pos.z); ring.material.opacity = 0.65 + Math.sin(t * 6) * 0.25; ring.scale.setScalar(me.hasBall ? 1.1 : 1);
+    // shot arc preview
+    arcDots.visible = me.hasBall && me.shooting && !me.dunking;
     if (arcDots.visible) {
-      const from = new THREE.Vector3(me.pos.x, 2 + me.y, me.pos.z), d = distToRim(me.pos), T = 0.75 + d * 0.06;
-      const v = RIM.clone().sub(from).sub(new THREE.Vector3(0, -0.5 * GRAV * T * T, 0)).divideScalar(T);
+      const from = handsMid(me), d = distToRim(me.pos), T = 0.75 + d * 0.06, v = RIM.clone().sub(from).add(new THREE.Vector3(0, 0.5 * GRAV * T * T, 0)).divideScalar(T);
       arcDots.children.forEach((dot, i) => { const s = (i + 1) / arcDots.children.length * T; dot.position.set(from.x + v.x * s, from.y + v.y * s - 0.5 * GRAV * s * s, from.z + v.z * s); });
     }
-    const meter = root.querySelector("#hmeter"), perfect = me.shooting ? 1 - Math.min(1, Math.abs(me.vy) / JUMP_V) : 0;
-    meter.style.strokeDashoffset = String(289 * (1 - perfect)); meter.style.stroke = perfect > 0.82 ? "#4fd18b" : "#ffb238";
-    // camera: behind you, looking at the hoop
+    // shot meter next to your player, with the green window
+    const showMeter = me.shooting && me.hasBall && !me.dunking;
+    meterBar.classList.toggle("on", showMeter);
+    if (showMeter) {
+      tmp.set(me.pos.x, 2.2 + me.y, me.pos.z).project(camera);
+      meterBar.style.left = `${(tmp.x * .5 + .5) * wrap.clientWidth + 46}px`; meterBar.style.top = `${(-tmp.y * .5 + .5) * wrap.clientHeight - 60}px`;
+      const w = greenWidth(me); meterGreen.style.bottom = `${(GREEN_C - w / 2) * 100}%`; meterGreen.style.height = `${w * 100}%`;
+      meterFill.style.height = `${Math.min(1, me.meter) * 100}%`;
+      meterFill.classList.toggle("in", Math.abs(me.meter - GREEN_C) <= w / 2);
+    }
+    // net sways after a make
+    const sw = t - netSwish; netMesh.scale.set(1, sw < .6 ? 1 + Math.sin(sw * 20) * .15 * (1 - sw / .6) : 1, 1);
+    // camera behind you, looking at the hoop
     const behind = flat(me.pos.clone().sub(RIM)).normalize(); if (!isFinite(behind.x) || behind.lengthSq() < .1) behind.set(0, 0, 1);
-    const camTarget = new THREE.Vector3(me.pos.x + behind.x * 6.2, 4.1 + me.y * 0.4, me.pos.z + behind.z * 6.2);
-    camera.position.lerp(camTarget, 0.08);
+    camera.position.lerp(new THREE.Vector3(me.pos.x + behind.x * 6.2, 4.1 + me.y * 0.4, me.pos.z + behind.z * 6.2), 0.08);
     camera.lookAt(new THREE.Vector3((me.pos.x + RIM.x) / 2, 1.9, (me.pos.z + RIM.z) / 2 - 0.5));
     renderer.render(scene, camera);
     raf = requestAnimationFrame(frame);
   }
+  const netMesh = scene.getObjectByName("net");
   let lastW = 0, lastH = 0;
-  function resize() {
-    const w = wrap.clientWidth, h = wrap.clientHeight;
-    if (w !== lastW || h !== lastH) { lastW = w; lastH = h; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }
-  }
+  function resize() { const w = wrap.clientWidth, h = wrap.clientHeight; if (w !== lastW || h !== lastH) { lastW = w; lastH = h; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); } }
   function finish(team) {
     over = true; const won = team === 0;
     if (won) { confetti(); SFX.win(); } else SFX.lose();
@@ -274,11 +319,134 @@ export function start(root, opts) {
     renderer.dispose(); scene.traverse(o => { o.geometry?.dispose?.(); if (o.material) [].concat(o.material).forEach(m => { m.map?.dispose?.(); m.dispose?.(); }); });
   }
   root.querySelector("#hquit").onclick = () => { cleanup(); opts.onExit(); };
+  if (opts.debug) window.__h3 = { players, ball, get score() { return score; }, input, doMove: k => doMove(players[0], k) };
   camera.position.set(0, 4, 14);
   msg("Your ball · get buckets", 1600);
   raf = requestAnimationFrame(frame);
   return cleanup;
 }
+
+// ---------- players: jointed bodies (shoulders, elbows, hips, knees) ----------
+function jerseyTex(c) {
+  return canvasTex(256, 256, (x, w, h) => {
+    x.fillStyle = "#" + c.jersey.toString(16).padStart(6, "0"); x.fillRect(0, 0, w, h);
+    x.fillStyle = "#" + c.trim.toString(16).padStart(6, "0"); x.fillRect(0, 0, w, 14); x.fillRect(0, h - 10, w, 10);
+    x.font = "900 120px 'Barlow Condensed', Impact, sans-serif"; x.textAlign = "center"; x.textBaseline = "middle";
+    x.lineWidth = 8; x.strokeStyle = "#" + c.trim.toString(16).padStart(6, "0"); x.fillStyle = "#fff";
+    for (const cx of [w * 0.25, w * 0.75]) { x.strokeText(c.num, cx, h * 0.55); x.fillText(c.num, cx, h * 0.55); }
+  });
+}
+function makePlayer(team, c) {
+  const std = (col, rough = .75) => new THREE.MeshStandardMaterial({ color: col, roughness: rough });
+  const skin = std(c.skin, .6), jersey = new THREE.MeshStandardMaterial({ map: jerseyTex(c), roughness: .8 }), shorts = std(c.shorts), shoe = std(0xf4f4f4, .5), sock = std(0xffffff);
+  const mesh = (geo, mt, x = 0, y = 0, z = 0) => { const m = new THREE.Mesh(geo, mt); m.position.set(x, y, z); m.castShadow = true; return m; };
+  const pivot = (parent, x, y, z) => { const g = new THREE.Group(); g.position.set(x, y, z); parent.add(g); return g; };
+  const group = new THREE.Group(), hip = pivot(group, 0, 0.98, 0);
+  // legs: thigh → knee → shin → shoe
+  const leg = side => {
+    const top = pivot(hip, side * 0.12, -0.04, 0);
+    top.add(mesh(new THREE.CapsuleGeometry(0.085, 0.3, 4, 10), skin, 0, -0.22, 0));
+    top.add(mesh(new THREE.CylinderGeometry(0.13, 0.12, 0.28, 12), shorts, 0, -0.08, 0));
+    const knee = pivot(top, 0, -0.44, 0);
+    knee.add(mesh(new THREE.CapsuleGeometry(0.07, 0.3, 4, 10), skin, 0, -0.2, 0));
+    knee.add(mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.12, 10), sock, 0, -0.36, 0));
+    knee.add(mesh(new THREE.BoxGeometry(0.15, 0.09, 0.3), shoe, 0, -0.48, 0.06));
+    return { top, knee };
+  };
+  const L = leg(-1), R = leg(1);
+  hip.add(mesh(new THREE.CylinderGeometry(0.22, 0.24, 0.24, 14), shorts, 0, 0.02, 0));
+  // torso + head
+  const chest = pivot(hip, 0, 0.12, 0);
+  const torso = mesh(new THREE.CylinderGeometry(0.25, 0.22, 0.56, 16), jersey, 0, 0.28, 0); torso.scale.z = 0.75; chest.add(torso);
+  const shoulders = mesh(new THREE.SphereGeometry(0.255, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2), jersey, 0, 0.55, 0); shoulders.scale.set(1, 0.4, 0.75); chest.add(shoulders);
+  chest.add(mesh(new THREE.CylinderGeometry(0.06, 0.07, 0.12, 10), skin, 0, 0.66, 0));
+  const head = pivot(chest, 0, 0.82, 0);
+  const skull = mesh(new THREE.SphereGeometry(0.16, 20, 16), skin, 0, 0, 0.01); skull.scale.set(0.95, 1.1, 1); head.add(skull);
+  head.add(mesh(new THREE.SphereGeometry(0.165, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.45), std(c.hair, .9), 0, 0.03, -0.005));
+  const band = mesh(new THREE.TorusGeometry(0.155, 0.022, 6, 20), std(c.jersey), 0, 0.06, 0); band.rotation.x = Math.PI / 2; head.add(band);
+  for (const s of [-1, 1]) head.add(mesh(new THREE.SphereGeometry(0.018, 8, 6), std(0x111111), s * 0.055, 0.02, 0.15));
+  // arms: shoulder → elbow → hand
+  const arm = side => {
+    const sh = pivot(chest, side * 0.31, 0.5, 0);
+    sh.add(mesh(new THREE.SphereGeometry(0.085, 10, 8), jersey));
+    sh.add(mesh(new THREE.CapsuleGeometry(0.06, 0.22, 4, 8), skin, 0, -0.17, 0));
+    const el = pivot(sh, 0, -0.33, 0);
+    el.add(mesh(new THREE.CapsuleGeometry(0.052, 0.22, 4, 8), skin, 0, -0.15, 0));
+    const hand = mesh(new THREE.SphereGeometry(0.06, 10, 8), skin, 0, -0.32, 0.01); hand.scale.set(0.8, 1.1, 0.6); el.add(hand);
+    return { sh, el, hand };
+  };
+  const AL = arm(-1), AR = arm(1);
+  const shadow = new THREE.Mesh(new THREE.CircleGeometry(0.42, 20), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: .25 }));
+  shadow.rotation.x = -Math.PI / 2; shadow.position.y = 0.015; group.add(shadow);
+  return { team, group, hip, chest, head, legL: L, legR: R, armL: AL, armR: AR, handL: AL.hand, handR: AR.hand, hands: [AL.hand, AR.hand], shadow,
+    pos: new THREE.Vector3(), vel: new THREE.Vector3(), y: 0, vy: 0, facing: Math.PI, hasBall: false, shooting: false, dunking: false,
+    hand: 1, drib: 0, phase: 0, meter: 0, stumble: 0, move: null };
+}
+const lerp = (a, b, k) => a + (b - a) * k;
+function pose(j, x, z = 0, k = 0.35) { j.rotation.x = lerp(j.rotation.x, x, k); j.rotation.z = lerp(j.rotation.z, z, k); }
+function animatePlayer(p, t, dt, other) {
+  p.group.position.set(p.pos.x, p.y, p.pos.z);
+  const speed = Math.min(1, flatLen(p.vel) / SPEED), air = p.y > 0.01, stumbling = p.stumble > t;
+  p.phase += dt * (6 + speed * 7) * (speed > 0.08 ? 1 : 0);
+  let spinRot = 0, lean = 0, crouch = 0;
+  const run = Math.sin(p.phase), run2 = Math.sin(p.phase + Math.PI);
+  // legs
+  if (air) { pose(p.legL.top, -0.9); pose(p.legL.knee, 1.1); pose(p.legR.top, -0.25); pose(p.legR.knee, 0.6); }
+  else {
+    const def = !p.hasBall && other.hasBall;
+    crouch = def ? 0.35 : p.hasBall ? 0.18 : 0.05;
+    if (p.shooting && !air) crouch = 0.55; // gather
+    pose(p.legL.top, -crouch * 1.1 + run * 0.75 * speed); pose(p.legL.knee, crouch * 1.6 + Math.max(0, -run) * 1.1 * speed);
+    pose(p.legR.top, -crouch * 1.1 + run2 * 0.75 * speed); pose(p.legR.knee, crouch * 1.6 + Math.max(0, -run2) * 1.1 * speed);
+    pose(p.legL.top, p.legL.top.rotation.x, def ? -0.25 : 0); pose(p.legR.top, p.legR.top.rotation.x, def ? 0.25 : 0);
+  }
+  p.hip.position.y = 0.98 - crouch * 0.16 + (air ? 0 : Math.abs(Math.sin(p.phase)) * 0.03 * speed);
+  lean = speed * 0.18 + crouch * 0.25;
+  // arms
+  const ballSide = p.hand ? p.armR : p.armL, freeSide = p.hand ? p.armL : p.armR;
+  if (stumbling) {
+    const k = Math.sin(t * 18); pose(p.armL.sh, -1.6 + k * .6, -0.9); pose(p.armR.sh, -1.2 - k * .6, 0.9); pose(p.armL.el, -0.4); pose(p.armR.el, -0.4);
+    lean = -0.35; pose(p.legL.top, -0.9); pose(p.legR.top, 0.4);
+  } else if (p.dunking || (p.slam && t - p.slam < 0.35)) {
+    const slam = p.slam && t - p.slam < 0.35;
+    pose(p.armR.sh, slam ? -2.0 : -3.05, 0, .5); pose(p.armR.el, -0.1); pose(p.armL.sh, -1.4, -0.4); pose(p.armL.el, -0.6);
+  } else if (p.shooting && p.hasBall) {
+    // set point above the forehead, elbows in
+    const rise = air ? 1 : 0.5;
+    pose(p.armR.sh, -2.55 * rise - 0.6 * (1 - rise), 0.12, .45); pose(p.armR.el, -1.55, 0, .45);
+    pose(p.armL.sh, -2.4 * rise - 0.5 * (1 - rise), -0.25, .45); pose(p.armL.el, -1.25, 0, .45);
+    p.handR.rotation.x = lerp(p.handR.rotation.x, -0.7, .4);
+  } else if (p.released && t - p.released < 0.6) {
+    // follow-through: arm straight up, wrist snapped down
+    pose(p.armR.sh, -2.95, 0.1, .5); pose(p.armR.el, -0.08, 0, .5); p.handR.rotation.x = lerp(p.handR.rotation.x, 1.1, .5);
+    pose(p.armL.sh, -2.6, -0.3, .4); pose(p.armL.el, -0.4);
+  } else if (p.blockT && t - p.blockT < 0.7) {
+    pose(p.armL.sh, -3.0, -0.15, .5); pose(p.armR.sh, -3.0, 0.15, .5); pose(p.armL.el, -0.1); pose(p.armR.el, -0.1);
+  } else if (p.hasBall) {
+    // dribble: ball arm pumps in time with the bounce; off arm out as a guard
+    p.drib += dt * (1.9 + speed * 1.2);
+    const u = p.drib % 1, push = Math.abs(Math.cos(Math.PI * u));
+    const sideSign = p.hand ? 1 : -1;
+    pose(ballSide.sh, -0.55 - (1 - push) * 0.25, sideSign * 0.18, .5); pose(ballSide.el, -0.55 + (1 - push) * 0.45, 0, .5);
+    pose(freeSide.sh, -0.9, -sideSign * 0.5); pose(freeSide.el, -0.9);
+    p.handR.rotation.x = lerp(p.handR.rotation.x, 0, .3);
+    if (p.move?.kind === "cross" || p.move?.kind === "behind") { const k = Math.min(1, (t - p.move.t0) / p.move.dur); pose(p.armL.sh, -0.6, -0.1 + (p.move.kind === "behind" ? 0.6 : 0) * Math.sin(Math.PI * k), .6); pose(p.armR.sh, -0.6, 0.1 - (p.move.kind === "behind" ? 0.6 : 0) * Math.sin(Math.PI * k), .6); lean += 0.15; }
+  } else if (!p.hasBall && other.hasBall) {
+    // defensive stance: arms wide, hands active
+    const a = Math.sin(t * 5) * 0.2; pose(p.armL.sh, -0.7 + a, -1.0); pose(p.armR.sh, -0.7 - a, 1.0); pose(p.armL.el, -0.5); pose(p.armR.el, -0.5);
+  } else {
+    pose(p.armL.sh, -run * 0.8 * speed, -0.08); pose(p.armR.sh, -run2 * 0.8 * speed, 0.08); pose(p.armL.el, -0.35 - speed * 0.6); pose(p.armR.el, -0.35 - speed * 0.6);
+    p.handR.rotation.x = lerp(p.handR.rotation.x, 0, .3);
+  }
+  if (p.move?.kind === "spin") spinRot = Math.min(1, (t - p.move.t0) / p.move.dur) * Math.PI * 2 * (p.spinDir || 1);
+  if (p.move?.kind === "stepback") lean = -0.25;
+  p.group.rotation.y = p.facing + spinRot;
+  p.chest.rotation.x = lerp(p.chest.rotation.x, lean, .3);
+  p.chest.rotation.z = lerp(p.chest.rotation.z, stumbling ? Math.sin(t * 9) * 0.35 : 0, .3);
+  p.head.rotation.x = -p.chest.rotation.x * 0.6;
+  p.shadow.position.y = 0.015 - p.y; p.shadow.scale.setScalar(Math.max(0.5, 1 - p.y * 0.35));
+}
+function flatLen(v) { return Math.hypot(v.x, v.z); }
 
 // ---------- art (all generated in code) ----------
 function canvasTex(w, h, draw) { const c = document.createElement("canvas"); c.width = w; c.height = h; draw(c.getContext("2d"), w, h); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t; }
@@ -340,30 +508,5 @@ function buildHoop(scene) {
   const rim = new THREE.Mesh(new THREE.TorusGeometry(RIM_R, .018, 8, 32), new THREE.MeshStandardMaterial({ color: 0xff5a1f, roughness: .4, metalness: .3 }));
   rim.rotation.x = Math.PI / 2; rim.position.copy(RIM); rim.castShadow = true; scene.add(rim);
   const net = new THREE.Mesh(new THREE.CylinderGeometry(RIM_R, RIM_R * .6, .42, 16, 3, true), new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity: .7 }));
-  net.position.set(RIM.x, RIM.y - .21, RIM.z); scene.add(net);
-}
-function makePlayer(jersey, shorts) {
-  const g = new THREE.Group(), mat = c => new THREE.MeshStandardMaterial({ color: c, roughness: .8 });
-  const skin = mat(0xc08a5c), m = (geo, mt, ...pos) => { const x = new THREE.Mesh(geo, mt); x.position.set(...pos); x.castShadow = true; return x; };
-  const body = new THREE.Group(); g.add(body);
-  const torso = m(new THREE.CapsuleGeometry(.3, .45, 6, 12), mat(jersey), 0, 1.25, 0); body.add(torso);
-  const shortsM = m(new THREE.CylinderGeometry(.31, .34, .3, 12), mat(shorts), 0, .85, 0); body.add(shortsM);
-  const head = m(new THREE.SphereGeometry(.3, 20, 16), skin, 0, 1.95, 0); body.add(head);
-  const band = m(new THREE.TorusGeometry(.28, .04, 8, 20), mat(jersey), 0, 2.02, 0); band.rotation.x = Math.PI / 2; body.add(band);
-  const limb = (r, l, mt) => { const p = new THREE.Group(); const c = m(new THREE.CapsuleGeometry(r, l, 4, 8), mt, 0, -l / 2 - r, 0); p.add(c); return p; };
-  const armL = limb(.08, .45, skin), armR = limb(.08, .45, skin); armL.position.set(-.4, 1.52, 0); armR.position.set(.4, 1.52, 0); body.add(armL, armR);
-  const legL = limb(.1, .5, skin), legR = limb(.1, .5, skin); legL.position.set(-.15, .75, 0); legR.position.set(.15, .75, 0); body.add(legL, legR);
-  for (const leg of [legL, legR]) { const shoe = m(new THREE.BoxGeometry(.18, .1, .3), mat(0xf2f2f2), 0, -.75, .06); leg.add(shoe); }
-  return { group: g, body, armL, armR, legL, legR, pos: new THREE.Vector3(), vel: new THREE.Vector3(), y: 0, vy: 0, facing: Math.PI, hasBall: false, shooting: false, dunking: false, team: jersey === 0x2f62d8 ? 0 : 1 };
-}
-function animatePlayer(p, t) {
-  p.group.position.set(p.pos.x, p.y, p.pos.z); p.group.rotation.y = p.facing;
-  const sp = Math.min(1, p.vel.length() / SPEED), sw = Math.sin(t * 11) * 0.9 * sp, air = p.y > 0.01;
-  p.legL.rotation.x = air ? -0.5 : sw; p.legR.rotation.x = air ? 0.3 : -sw;
-  if (p.shooting || p.dunking || (air && !p.hasBall)) { p.armL.rotation.x = -2.9; p.armR.rotation.x = -3.0; }
-  else if (p.hasBall) { p.armL.rotation.x = -sw * .6; p.armR.rotation.x = -0.6 - Math.abs(Math.sin(t * 8)) * 0.5; }
-  else { p.armL.rotation.x = -sw; p.armR.rotation.x = sw; }
-  // bouncy squash & stretch
-  const s = air ? 1 + Math.min(.12, Math.abs(p.vy) * .02) : 1 - Math.abs(Math.sin(t * 11)) * .04 * sp;
-  p.body.scale.set(1 / Math.sqrt(s), s, 1 / Math.sqrt(s));
+  net.position.set(RIM.x, RIM.y - .21, RIM.z); net.name = "net"; scene.add(net);
 }

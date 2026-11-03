@@ -10,7 +10,7 @@ let me = { name: store.get("db_name") || null, elo: 1000, w: 0, l: 0, d: 0, rank
 
 const MODES = {
   deep: { name: "Deep Ball", how: ["Same prompt for both players. 30 seconds to answer.", "Correct answers score 1–10. Forgotten deep cuts score high, famous or recent picks score low.", "Wrong or blank answers score 0. First to 3 rounds wins."] },
-  hoops: { name: "Street Hoops", how: ["3D 1v1 streetball on a city court. Joystick to move, hold Shoot to jump, let go at the top of your jump.", "The ring around the Shoot button turns green at the perfect release. Get close to the rim and it's a dunk.", "On defense the same button blocks shots, or steals the ball when you're right on them.", "Beyond the arc counts 2, inside counts 1. First to 15. Two players on one device? Use the classic 2D version."] },
+  hoops: { name: "Street Hoops", how: ["3D 1v1 streetball on a city court. Move with the joystick or WASD. Hold E (or Shoot) and let go when the meter hits the green window.", "Dribble moves: Q crossover, X behind the back, F spin, C step back. Catch a defender leaning and you break his ankles.", "Get close to the rim and it's a dunk. On defense, E blocks shots or steals when you're right on them.", "Beyond the arc counts 2, inside counts 1. First to 15. Two players on one device? Classic 2D: Player 1 uses E, Player 2 uses K."] },
   draft: { name: "Spin & Draft", how: ["Spin the wheel to land on a random NBA team, then draft anyone who ever played for them. 25 seconds per pick.", "Build a real lineup: a PG, SG, SF, PF and C, plus a 6th man who can play anything. Two of the same position only works if one is your 6th man.", "Each player spins their own wheel, so luck matters.", "Every player is rated on his best season with that team. The better roster usually wins the best-of-7 series, but upsets happen."] },
   guess: { name: "Guess the Player", how: ["You start with the position and years played. Then a clue drops every 6 seconds, from hardest to easiest.", "First to name the player takes the round. Guess on clue 1 for 5 points, clue 5 for 1.", "Wrong guesses cost nothing, so keep firing. Most points after 5 players wins."] },
 };
@@ -99,7 +99,7 @@ let hoopsStop = null;
 async function hoops(vsAI) {
   stop(); view = "hoops";
   app.innerHTML = `<div class="panel hoops-panel"><p class="status pulse">Loading the court…</p></div>`;
-  const root = app.querySelector(".hoops-panel"), opts = { vsAI, p1: vsAI ? me.name : "Player 1", onExit: () => { hoopsStop = null; home(); } };
+  const root = app.querySelector(".hoops-panel"), opts = { vsAI, debug: /debug3d/.test(location.search), p1: vsAI ? me.name : "Player 1", onExit: () => { hoopsStop = null; home(); } };
   if (!vsAI) { hoopsStop = window.Hoops.start(root, opts); return; }
   try {
     const mod = await import("./hoops3d.js");
