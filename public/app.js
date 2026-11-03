@@ -823,7 +823,7 @@ async function support(msg) {
   </div>
   ${me.plus ? `
   <div class="panel plus">
-    <div class="row between"><span class="label">Deep Ball+</span><span class="price">⭐ Active</span></div>
+    <div class="row between"><img class="plogo" src="/plus-logo.png" alt="Deep Ball+"><span class="price">⭐ Active</span></div>
     <p class="status">Thanks for keeping Deep Ball going! Your perks:</p>${perks}
     <div class="btns"><button id="host">Duos / custom</button><button class="ghost" id="tour">Tournament</button></div>
     ${cfg.manageUrl ? `<p class="small"><a href="${esc(cfg.manageUrl)}" target="_blank" rel="noopener" style="color:var(--amber)">Manage or cancel your subscription</a></p>` : ""}
@@ -837,7 +837,7 @@ async function support(msg) {
     <p class="small">Play them: Play a friend → Deep Ball → tick "My custom questions". The AI judge scores the answers.</p>
   </div>` : `
   <div class="panel plus">
-    <div class="row between"><span class="label">Deep Ball+</span><span class="price"><b>$5</b>/month</span></div>
+    <div class="row between"><img class="plogo" src="/plus-logo.png" alt="Deep Ball+"><span class="price"><b>$5</b>/month</span></div>
     <p class="small">Mostly this is to keep building the game. You also get:</p>${perks}
     <div class="btns">${link(plusLink, "Join Deep Ball+")}</div>
     <p class="small">Plus unlocks on this account automatically after checkout. Already paid? <button class="link" id="recheck">Refresh my status</button></p>
