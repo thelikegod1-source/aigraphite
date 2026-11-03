@@ -33,10 +33,10 @@ const stop = () => { clearInterval(timer); timer = null; clearInterval(clockTime
 
 function nav(active) {
   const tab = (id, label) => `<button class="tab" data-go="${id}" ${active === id ? 'aria-current="page"' : ""}>${label}</button>`;
-  return `<nav class="tabs">${tab("home", "Play")}${tab("board", "Ranks")}${tab("profile", "Profile")}<button class="tab snd" id="snd" aria-label="${muted ? "Turn sound on" : "Turn sound off"}" aria-pressed="${!muted}">${muted ? "🔇" : "🔊"}</button></nav>`;
+  return `<nav class="tabs">${tab("home", "Play")}${tab("board", "Ranks")}${tab("profile", "Profile")}<button class="tab heart" data-go="support" aria-label="Support Deep Ball" ${active === "support" ? 'aria-current="page"' : ""}>💛</button><button class="tab snd" id="snd" aria-label="${muted ? "Turn sound on" : "Turn sound off"}" aria-pressed="${!muted}">${muted ? "🔇" : "🔊"}</button></nav>`;
 }
 function wireNav() {
-  document.querySelectorAll("[data-go]").forEach(b => b.onclick = () => ({ home, board, profile })[b.dataset.go]());
+  document.querySelectorAll("[data-go]").forEach(b => b.onclick = () => ({ home, board, profile, support })[b.dataset.go]());
   const sb = $("#snd");
   if (sb) sb.onclick = () => { muted = !muted; store.set("db_mute", muted ? "1" : "0"); sb.textContent = muted ? "🔇" : "🔊"; sb.setAttribute("aria-pressed", String(!muted)); if (!muted) SFX.roundWin(); };
 }
@@ -244,9 +244,11 @@ function renderDone() {
       <div class="games">${S.series.games.map((w, i) => `<span class="${w ? "w" : "l"}">G${i + 1}</span>`).join("")}</div>` : ""}
     ${S.practice ? `<p class="status small">Practice match. Your Elo didn't change.</p>` : `<p class="status small">Your Elo is now <b>${me.elo}</b>${me.rank ? ` · rank #${me.rank}` : ""}</p>`}
     <div class="btns"><button id="share">Share result</button><button class="ghost" id="again">Play again</button></div>
-    <div class="btns"><button class="ghost" id="home">Home</button></div></div>
+    <div class="btns"><button class="ghost" id="home">Home</button></div>
+    <button class="link" id="sup">Enjoying Deep Ball? Support the dev 💛</button></div>
     ${S.mode === "draft" ? `<div class="panel rosters">${rosterList(S.rounds.map(x => x.mine ? { ...x.mine, team: x.myTeam, shown: true } : null), `Your roster · ${S.myTotal}`)}${rosterList(S.rounds.map(x => x.theirs ? { ...x.theirs, team: x.theirTeam, shown: true } : null), `${S.them} · ${S.theirTotal}`)}</div>` : ""}`;
   $("#share").onclick = shareCard;
+  if ($("#sup")) $("#sup").onclick = support;
   if (won) setTimeout(confetti, 250);
   (won ? SFX.win : lost ? SFX.lose : SFX.roundWin)();
   $("#again").onclick = async () => { if (S.practice) { try { join((await api("practice", { mode: S.mode })).match); } catch (e) { home(e.message); } } else find(); };
@@ -727,6 +729,39 @@ function wrap(x, text, X, Y, max, lh) {
     line += w + " ";
   }
   x.fillText(line.trim(), X, Y);
+}
+
+/* ---------- Support / Deep Ball+ ---------- */
+function support() {
+  stop(); view = "support";
+  const cfg = window.SUPPORT || {};
+  const link = (url, label, cls = "") => url
+    ? `<a class="btn ${cls}" href="${esc(url)}" target="_blank" rel="noopener">${label}</a>`
+    : `<button class="${cls}" disabled>Opening soon</button>`;
+  const perk = (icon, title, text) => `<li><span class="pi">${icon}</span><div><b>${title}</b> <span class="soon">Coming soon</span><p>${text}</p></div></li>`;
+  app.innerHTML = `${nav("support")}
+  <div class="panel support-hero">
+    <span class="label">Support Deep Ball</span>
+    <p class="big">Keep the game <span style="color:var(--amber)">growing</span></p>
+    <p class="status">Deep Ball is free and made by one person, <b>@wyaclaw</b>. Support mostly goes toward continuing to build the game: new modes, more questions, and keeping the servers running.</p>
+  </div>
+  <div class="panel">
+    <span class="label">Donate</span>
+    <p class="small">Any amount helps. One-time, no account needed.</p>
+    <div class="btns">${link(cfg.donateUrl, "Donate 💛")}</div>
+  </div>
+  <div class="panel plus">
+    <div class="row between"><span class="label">Deep Ball+</span><span class="price"><b>$5</b>/month</span></div>
+    <p class="small">Mostly this is to keep building the game. Members get every Plus feature first as it ships, plus a supporter badge on the leaderboard (also coming soon).</p>
+    <ul class="perks">
+      ${perk("🏆", "Tournaments", "Bracket tournaments with your friends or the whole community.")}
+      ${perk("✍️", "Custom questions", "Write your own prompts and play them with friends.")}
+      ${perk("👥", "Duos in every mode", "Team up 2v2 in Deep Ball, Guess the Player, and Spin &amp; Draft.")}
+    </ul>
+    <div class="btns">${link(cfg.plusUrl, "Join Deep Ball+", "")}</div>
+    <p class="small">Cancel anytime. Features marked "Coming soon" aren't live yet.</p>
+  </div>`;
+  wireNav();
 }
 
 /* ---------- Leaderboard ---------- */

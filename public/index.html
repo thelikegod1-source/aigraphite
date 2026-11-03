@@ -329,6 +329,20 @@ html body{transition:transform .5s}
 .fake-alert{background:#fff;color:#111;border-radius:14px;padding:18px 20px;max-width:300px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.6);animation:pop .3s both}
 .fake-alert b{font-size:1.15rem;color:#d00}.fake-alert p{margin:8px 0}.fake-alert .small{color:#555}
 .troll-on{margin:0;font-size:.85rem;color:#ff79c6;background:rgba(255,79,180,.1);border:1px solid rgba(255,79,180,.4);border-radius:6px;padding:6px 10px}
+/* Support tab */
+.tabs .heart{flex:0 0 auto;padding:9px 13px;font-size:1.05rem}
+a.btn{display:flex;align-items:center;justify-content:center;text-decoration:none;font-family:var(--display);font-size:1.25rem;letter-spacing:.04em;text-transform:uppercase;
+  border-radius:8px;padding:.6em 1em;flex:1 1 140px;background:var(--amber);color:#1a1205;box-shadow:0 6px 0 -1px #b87100,0 10px 24px -8px rgba(255,178,56,.6);transition:transform .16s}
+a.btn:hover{transform:translateY(-2px)}
+.support-hero{text-align:center;align-items:center}
+.support-hero .status{max-width:44ch}
+.plus{border-color:rgba(255,178,56,.55);box-shadow:0 0 0 1px rgba(255,178,56,.25),0 20px 50px -25px rgba(255,178,56,.6)}
+.price{font-family:var(--mono);color:var(--muted)}.price b{font-size:1.6rem;color:var(--amber)}
+.perks{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:12px}
+.perks li{display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:start}
+.perks .pi{font-size:1.6rem;line-height:1}
+.perks p{margin:2px 0 0;color:var(--muted);font-size:.92rem}
+.soon{font-family:var(--mono);font-size:.68rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:2px 7px;vertical-align:.15em}
 #confetti{position:fixed;inset:0;pointer-events:none;z-index:50}
 
 @media (prefers-reduced-motion:reduce){
@@ -346,6 +360,7 @@ html body{transition:transform .5s}
   <main id="app"></main>
 </div>
 <a class="credit" href="https://www.tiktok.com/@wyaclaw" target="_blank" rel="noopener">Made by <b>@wyaclaw</b> <span>on TikTok &amp; Discord</span></a>
+<script src="support-config.js"></script>
 <script src="franchises.js"></script>
 <script src="app.js"></script>
 </body>
