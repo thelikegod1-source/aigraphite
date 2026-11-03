@@ -110,34 +110,101 @@ function find() {
 }
 
 function friend(msg) {
+  if (typeof msg !== "string") msg = ""; // when used as a click handler, ignore the event
   stop(); view = "friend";
+  const plus = !!me.plus, star = plus ? "" : ` <span class="plustag">⭐ Plus</span>`;
   app.innerHTML = `<div class="panel"><span class="label">Play a friend · ${esc(MODES[mode].name)}</span>
-    <div class="btns"><button id="mk">Create a room</button></div>
-    <form id="jf" class="btns" autocomplete="off"><input type="text" id="code" maxlength="5" placeholder="Enter a code" aria-label="Room code" style="text-transform:uppercase"><button class="ghost">Join</button></form>
+    <div class="opts">
+      <label class="opt ${plus ? "" : "locked"}"><input type="checkbox" id="duo" ${plus ? "" : "disabled"}> Duos (2v2)${star}</label>
+      ${mode === "deep" ? `<label class="opt ${plus ? "" : "locked"}"><input type="checkbox" id="cus" ${plus ? "" : "disabled"}> My custom questions${star}</label>` : ""}
+    </div>
+    <div class="btns"><button id="mk">Create a room</button><button class="ghost" id="tr">Tournament${plus ? "" : " ⭐"}</button></div>
+    <form id="jf" class="btns" autocomplete="off"><input type="text" id="code" maxlength="6" placeholder="Room or tournament code" aria-label="Room or tournament code" style="text-transform:uppercase"><button class="ghost">Join</button></form>
     ${msg ? `<p class="err">${esc(msg)}</p>` : ""}
+    ${plus ? "" : `<p class="small">Duos, custom questions and hosting tournaments come with <button class="link" id="getplus">Deep Ball+</button>. Joining a friend's is always free.</p>`}
     <div class="btns"><button class="ghost" id="back">Back</button></div></div>`;
   $("#back").onclick = () => home();
+  if ($("#getplus")) $("#getplus").onclick = support;
+  $("#tr").onclick = () => plus ? tourCreate() : support();
   $("#jf").onsubmit = async e => {
     e.preventDefault();
-    try { join((await api("room/join", { code: $("#code").value.trim() })).match); } catch (err) { friend(err.message); }
+    try { routeJoin(await api("room/join", { code: $("#code").value.trim() })); } catch (err) { friend(err.message); }
   };
   $("#mk").onclick = async () => {
     try {
-      const { code } = await api("room/create", { mode });
-      view = "room";
-      app.innerHTML = `<div class="panel"><span class="label">Your room · ${esc(MODES[mode].name)}</span>
-        <p class="code">${code}</p><p class="status">Send this code to a friend. The match starts when they join.</p>
-        <div class="btns"><button id="cp">Copy invite</button><button class="ghost" id="cx">Cancel</button></div>
-        <p class="status pulse">Waiting for your friend…</p></div>`;
-      const invite = `Play me in Deep Ball 🏀 Go to ${location.origin}, tap Play a friend, and enter code ${code}`;
-      $("#cp").onclick = async () => { try { await navigator.clipboard.writeText(invite); $("#cp").textContent = "Copied"; } catch { $("#cp").textContent = code; } };
-      $("#cx").onclick = () => { api("leave", {}).catch(() => {}); home(); };
-      timer = setInterval(async () => {
-        if (view !== "room") return;
-        try { const d = await api("room/status", { code }); if (d.match) join(d.match); } catch (e) { friend(e.message); }
-      }, 2500);
+      const { code } = await api("room/create", { mode, duo: !!$("#duo")?.checked, custom: !!$("#cus")?.checked });
+      lobby(code, true);
     } catch (e) { friend(e.message); }
   };
+}
+function routeJoin(d) { if (d.match) join(d.match); else if (d.lobby) lobby(d.lobby, false); else if (d.tour) tourView(d.tour, true); }
+
+// Waiting room: shows who's in (and teams for duos) until the match starts.
+function lobby(code, host) {
+  stop(); view = "room";
+  const draw = d => {
+    const size = d?.size || 2, mem = d?.members || [];
+    const team = t => mem.filter(x => x.team === t).map(x => `<li>${esc(x.name)}${x.you ? " (you)" : ""}</li>`).join("") || "<li class='muted'>…</li>";
+    app.innerHTML = `<div class="panel"><span class="label">${host ? "Your room" : "Room"} · ${esc(MODES[d?.mode || mode].name)}${d?.duo ? " · Duos" : ""}${d?.custom ? " · Custom questions" : ""}</span>
+      <p class="code">${code}</p>
+      <p class="status">${d?.duo ? `Need 4 players (${mem.length}/4). Teams fill in order.` : "Send this code to a friend. The match starts when they join."}</p>
+      ${d?.duo ? `<div class="teams"><div><span class="label">Team A</span><ul>${team("A")}</ul></div><div><span class="label">Team B</span><ul>${team("B")}</ul></div></div>` : ""}
+      <div class="btns"><button id="cp">Copy invite</button><button class="ghost" id="cx">Leave</button></div>
+      <p class="status pulse">Waiting for players…</p></div>`;
+    const invite = `Play me in Deep Ball 🏀 Go to ${location.origin}, tap Play a friend, and enter code ${code}`;
+    $("#cp").onclick = async () => { try { await navigator.clipboard.writeText(invite); $("#cp").textContent = "Copied"; } catch { $("#cp").textContent = code; } };
+    $("#cx").onclick = () => { api("leave", { code }).catch(() => {}); home(); };
+  };
+  draw(null);
+  const tickRoom = async () => {
+    if (view !== "room") return;
+    try { const d = await api("room/status", { code }); if (d.match) return join(d.match); draw(d); } catch (e) { friend(e.message); }
+  };
+  tickRoom(); timer = setInterval(tickRoom, 2500);
+}
+
+/* ---------- Tournaments ---------- */
+let curTour = null, tourJoined = {};
+function tourCreate(msg) {
+  if (typeof msg !== "string") msg = "";
+  stop(); view = "tourmake";
+  app.innerHTML = `<div class="panel"><span class="label">Host a tournament</span>
+    <div class="seg" role="group" aria-label="Mode">${Object.entries(MODES).map(([k, v]) => `<button data-tm="${k}" aria-pressed="${k === mode}">${k === "guess" ? "Guess" : esc(v.name)}</button>`).join("")}</div>
+    <div class="seg" role="group" aria-label="Size"><button data-ts="4" aria-pressed="true">4 players</button><button data-ts="8" aria-pressed="false">8 players</button></div>
+    <div class="btns"><button id="go">Create bracket</button><button class="ghost" id="back">Back</button></div>
+    ${msg ? `<p class="err">${esc(msg)}</p>` : ""}</div>`;
+  let tm = mode, ts = 4;
+  document.querySelectorAll("[data-tm]").forEach(b => b.onclick = () => { tm = b.dataset.tm; document.querySelectorAll("[data-tm]").forEach(x => x.setAttribute("aria-pressed", String(x === b))); });
+  document.querySelectorAll("[data-ts]").forEach(b => b.onclick = () => { ts = +b.dataset.ts; document.querySelectorAll("[data-ts]").forEach(x => x.setAttribute("aria-pressed", String(x === b))); });
+  $("#back").onclick = () => friend();
+  $("#go").onclick = async () => { try { const { code } = await api("tour/create", { mode: tm, size: ts }); tourView(code); } catch (e) { tourCreate(e.message); } };
+}
+function tourView(code, joining) {
+  stop(); view = "tour"; curTour = code;
+  const draw = T => {
+    const g = x => x ? `<span class="${x.you ? "you" : ""}">${esc(x.name)}</span>` : `<span class="muted">bye</span>`;
+    const rounds = T.rounds.map((r, i) => `<div class="bround"><span class="label">${i === T.rounds.length - 1 && T.status === "live" ? "Now playing" : `Round ${i + 1}`}</span>
+      ${r.map(m => `<div class="bmatch ${m.live ? "live" : ""}">${g(m.a)}<em>vs</em>${g(m.b)}${m.winner ? `<b>→ ${esc(m.winner.name)}${m.score ? ` (${m.score})` : ""}</b>` : m.live ? "<b class='pulse'>live</b>" : ""}</div>`).join("")}</div>`).join("");
+    app.innerHTML = `<div class="panel"><span class="label">Tournament · ${esc(MODES[T.mode].name)} · ${T.size} players</span>
+      ${T.status === "done" ? `<div class="trophy">🏆</div><p class="big" style="color:var(--amber)">${esc(T.champ?.name || "")}</p><p class="status">${T.champ?.you ? "You won the tournament!" : "is the champion"}</p>`
+        : `<p class="code">${code}</p><p class="status">${T.status === "lobby" ? `Players join with this code (${T.players.length}/${T.size}).` : "Bracket is live. Your matches start automatically."}</p>`}
+      ${T.status === "lobby" ? `<ul class="plist">${T.players.map(p => `<li>${esc(p.name)}${p.you ? " (you)" : ""}</li>`).join("")}</ul>` : rounds}
+      <div class="btns">${T.status === "lobby" && T.host ? `<button id="start" ${T.players.length < 3 ? "disabled" : ""}>${T.players.length < 3 ? "Need 3+ players" : `Start (${T.players.length})`}</button>` : ""}<button class="ghost" id="cp">Copy invite</button><button class="ghost" id="hm">Home</button></div></div>`;
+    $("#hm").onclick = () => { curTour = null; home(); };
+    $("#cp").onclick = async () => { try { await navigator.clipboard.writeText(`Join my Deep Ball tournament 🏆 ${location.origin} → Play a friend → code ${code}`); $("#cp").textContent = "Copied"; } catch { $("#cp").textContent = code; } };
+    if ($("#start")) $("#start").onclick = async () => { try { draw(await api("tour/start", { code })); } catch (e) { alertMsg(e.message); } };
+    if (T.status === "done" && T.champ?.you && !tourJoined["champ" + code]) { tourJoined["champ" + code] = 1; confetti(); SFX.win(); }
+  };
+  const alertMsg = m => { const p = document.createElement("p"); p.className = "err"; p.textContent = m; app.querySelector(".panel")?.appendChild(p); };
+  const tickT = async () => {
+    if (view !== "tour") return;
+    try {
+      const T = await api(joining ? "tour/join" : "tour/status", { code }); joining = false;
+      if (T.myMatch && !tourJoined[T.myMatch]) { tourJoined[T.myMatch] = 1; return join(T.myMatch); }
+      draw(T);
+    } catch (e) { friend(e.message); }
+  };
+  tickT(); timer = setInterval(tickT, 3000);
 }
 
 /* ---------- Match ---------- */
@@ -221,9 +288,9 @@ function clock() {
 
 function boardBar() {
   return `${trollButton()}<div class="board">
-    <div class="side"><div class="label">You</div><div class="pname">${esc(S.me)}</div><div class="pts">${S.myScore}</div></div>
+    <div class="side"><div class="label">${S.duo ? "Your team" : "You"}</div><div class="pname">${esc(S.me)}${S.meStar ? ' <span class="star" title="Deep Ball+">⭐</span>' : ""}</div><div class="pts">${S.myScore}</div></div>
     <div class="clock calm" id="clk" role="timer" aria-label="Shot clock"><span class="sc-bar"><i></i></span><span class="sc-digits"></span><span class="sc-label">Shot clock</span></div>
-    <div class="side r"><div class="label">Opponent</div><div class="pname">${esc(S.them)}</div><div class="pts">${S.theirScore}</div></div></div>`;
+    <div class="side r"><div class="label">${S.duo ? "Opponents" : "Opponent"}</div><div class="pname">${S.themStar ? '<span class="star" title="Deep Ball+">⭐</span> ' : ""}${esc(S.them)}</div><div class="pts">${S.theirScore}</div></div></div>`;
 }
 const dots = () => `<div class="dots">${Array.from({ length: S.totalRounds }, (_, i) => `<i class="${i <= S.round ? "on" : ""}"></i>`).join("")}</div>`;
 
@@ -249,6 +316,7 @@ function renderDone() {
     ${S.mode === "draft" ? `<div class="panel rosters">${rosterList(S.rounds.map(x => x.mine ? { ...x.mine, team: x.myTeam, shown: true } : null), `Your roster · ${S.myTotal}`)}${rosterList(S.rounds.map(x => x.theirs ? { ...x.theirs, team: x.theirTeam, shown: true } : null), `${S.them} · ${S.theirTotal}`)}</div>` : ""}`;
   $("#share").onclick = shareCard;
   if ($("#sup")) $("#sup").onclick = support;
+  if (S.tour) { $("#again").textContent = "Back to tournament"; $("#again").onclick = () => tourView(S.tour); }
   if (won) setTimeout(confetti, 250);
   (won ? SFX.win : lost ? SFX.lose : SFX.roundWin)();
   $("#again").onclick = async () => { if (S.practice) { try { join((await api("practice", { mode: S.mode })).match); } catch (e) { home(e.message); } } else find(); };
@@ -732,36 +800,71 @@ function wrap(x, text, X, Y, max, lh) {
 }
 
 /* ---------- Support / Deep Ball+ ---------- */
-function support() {
+async function support(msg) {
+  if (typeof msg !== "string") msg = "";
   stop(); view = "support";
+  await refreshMe();
   const cfg = window.SUPPORT || {};
-  const link = (url, label, cls = "") => url
-    ? `<a class="btn ${cls}" href="${esc(url)}" target="_blank" rel="noopener">${label}</a>`
-    : `<button class="${cls}" disabled>Opening soon</button>`;
-  const perk = (icon, title, text) => `<li><span class="pi">${icon}</span><div><b>${title}</b> <span class="soon">Coming soon</span><p>${text}</p></div></li>`;
+  const link = (url, label) => url ? `<a class="btn" href="${esc(url)}" target="_blank" rel="noopener">${label}</a>` : `<button disabled>Opening soon</button>`;
+  // client_reference_id ties the Stripe checkout to this player, so Plus unlocks automatically.
+  const plusLink = cfg.plusUrl ? cfg.plusUrl + (cfg.plusUrl.includes("?") ? "&" : "?") + "client_reference_id=" + encodeURIComponent(pid) : "";
+  const perk = (icon, title, text) => `<li><span class="pi">${icon}</span><div><b>${title}</b><p>${text}</p></div></li>`;
+  const perks = `<ul class="perks">
+      ${perk("🏆", "Host tournaments", "4 or 8 player brackets in any mode. Friends join free with your code.")}
+      ${perk("✍️", "Custom questions", "Write your own Deep Ball prompts and play them with friends.")}
+      ${perk("👥", "Duos in every mode", "2v2 in Deep Ball, Guess the Player, and Spin &amp; Draft. Friends join free.")}
+      ${perk("⭐", "Supporter badge", "A star next to your name on the leaderboard and in matches.")}
+    </ul>`;
   app.innerHTML = `${nav("support")}
   <div class="panel support-hero">
     <span class="label">Support Deep Ball</span>
     <p class="big">Keep the game <span style="color:var(--amber)">growing</span></p>
     <p class="status">Deep Ball is free and made by one person, <b>@wyaclaw</b>. Support mostly goes toward continuing to build the game: new modes, more questions, and keeping the servers running.</p>
   </div>
+  ${me.plus ? `
+  <div class="panel plus">
+    <div class="row between"><span class="label">Deep Ball+</span><span class="price">⭐ Active</span></div>
+    <p class="status">Thanks for keeping Deep Ball going! Your perks:</p>${perks}
+    <div class="btns"><button id="host">Duos / custom</button><button class="ghost" id="tour">Tournament</button></div>
+    ${cfg.manageUrl ? `<p class="small"><a href="${esc(cfg.manageUrl)}" target="_blank" rel="noopener" style="color:var(--amber)">Manage or cancel your subscription</a></p>` : ""}
+  </div>
+  <div class="panel">
+    <label class="label" for="qs">My custom questions</label>
+    <p class="small">One question per line, up to 30. Example: Name a player who played for the Seattle SuperSonics</p>
+    <textarea id="qs" rows="8" placeholder="Name a player who wore #24&#10;Name a Duke player drafted in the 2010s"></textarea>
+    <div class="btns"><button id="saveq">Save questions</button></div>
+    <p class="small" id="qmsg">${msg ? esc(msg) : ""}</p>
+    <p class="small">Play them: Play a friend → Deep Ball → tick "My custom questions". The AI judge scores the answers.</p>
+  </div>` : `
+  <div class="panel plus">
+    <div class="row between"><span class="label">Deep Ball+</span><span class="price"><b>$5</b>/month</span></div>
+    <p class="small">Mostly this is to keep building the game. You also get:</p>${perks}
+    <div class="btns">${link(plusLink, "Join Deep Ball+")}</div>
+    <p class="small">Plus unlocks on this account automatically after checkout. Already paid? <button class="link" id="recheck">Refresh my status</button></p>
+  </div>`}
   <div class="panel">
     <span class="label">Donate</span>
     <p class="small">Any amount helps. One-time, no account needed.</p>
     <div class="btns">${link(cfg.donateUrl, "Donate 💛")}</div>
   </div>
-  <div class="panel plus">
-    <div class="row between"><span class="label">Deep Ball+</span><span class="price"><b>$5</b>/month</span></div>
-    <p class="small">Mostly this is to keep building the game. Members get every Plus feature first as it ships, plus a supporter badge on the leaderboard (also coming soon).</p>
-    <ul class="perks">
-      ${perk("🏆", "Tournaments", "Bracket tournaments with your friends or the whole community.")}
-      ${perk("✍️", "Custom questions", "Write your own prompts and play them with friends.")}
-      ${perk("👥", "Duos in every mode", "Team up 2v2 in Deep Ball, Guess the Player, and Spin &amp; Draft.")}
-    </ul>
-    <div class="btns">${link(cfg.plusUrl, "Join Deep Ball+", "")}</div>
-    <p class="small">Cancel anytime. Features marked "Coming soon" aren't live yet.</p>
+  <div class="panel policy">
+    <span class="label">Billing &amp; refunds</span>
+    <p class="small">Deep Ball+ is $5 per month and renews monthly until you cancel. Cancel anytime${cfg.manageUrl ? " from the manage link above or" : ""} from the link in your Stripe receipt email; you keep Plus until the end of the period you paid for. If something's wrong with a charge, contact us within 14 days for a refund. Donations are one-time and not refundable except for mistakes.</p>
+    <p class="small">Payments are processed by Stripe; Deep Ball never sees your card details. Contact: ${cfg.contactEmail ? `<b>${esc(cfg.contactEmail)}</b> · ` : ""}@wyaclaw on TikTok &amp; Discord.</p>
   </div>`;
   wireNav();
+  if ($("#recheck")) $("#recheck").onclick = () => support(me.plus ? "Plus is active." : "");
+  if ($("#host")) $("#host").onclick = () => friend();
+  if ($("#tour")) $("#tour").onclick = () => tourCreate();
+  if ($("#qs")) {
+    try { const { prompts } = await api("pack?x=1"); $("#qs").value = prompts.join("\n"); } catch {}
+    $("#saveq").onclick = async () => {
+      try {
+        const d = await api("pack", { prompts: $("#qs").value.split("\n") });
+        $("#qmsg").textContent = `Saved ${d.prompts.length} question${d.prompts.length === 1 ? "" : "s"}.`; $("#qmsg").className = "small ok";
+      } catch (e) { $("#qmsg").textContent = e.message; $("#qmsg").className = "small bad"; }
+    };
+  }
 }
 
 /* ---------- Leaderboard ---------- */
@@ -770,7 +873,7 @@ async function board() {
   app.innerHTML = `${nav("board")}<div class="panel"><span class="label">Top players</span><p class="status pulse">Loading…</p></div>`; wireNav();
   try {
     const { players } = await api("leaderboard");
-    const rows = players.map((p, i) => `<tr class="${p.name === me.name ? "you" : ""}"><td class="num">${i + 1}</td><td class="nm">${esc(p.name)}</td><td class="num">${p.elo}</td><td class="num">${p.w}-${p.l}${p.d ? `-${p.d}` : ""}</td></tr>`).join("");
+    const rows = players.map((p, i) => `<tr class="${p.name === me.name ? "you" : ""}"><td class="num">${i + 1}</td><td class="nm">${esc(p.name)}${p.plus ? ' <span class="star" title="Deep Ball+ supporter">⭐</span>' : ""}</td><td class="num">${p.elo}</td><td class="num">${p.w}-${p.l}${p.d ? `-${p.d}` : ""}</td></tr>`).join("");
     app.innerHTML = `${nav("board")}<div class="panel"><span class="label">Top players · Elo</span>
       ${players.length ? `<div class="scroll"><table class="lb"><thead><tr><th class="num">#</th><th>Player</th><th class="num">Elo</th><th class="num">W-L</th></tr></thead><tbody>${rows}</tbody></table></div>`
         : `<p class="status">No ranked games yet. Win an online match to be first on the board.</p>`}

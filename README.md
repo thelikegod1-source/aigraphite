@@ -31,3 +31,16 @@ Every push to `main` updates the site.
 - **Share card:** image of your result for Instagram/TikTok.
 - **Installable:** Add to Home Screen opens it full-screen like an app.
 - **Spin & Draft:** spin a wheel of all 30 franchises, draft anyone who ever played for that team, 6 picks, best-of-7 series decides it. Ratings live in `public/teams/*.json`, built by `lib/build-teams.py` from public box-score data (1947 to March 2025).
+
+## Deep Ball+ and Stripe (owner: an adult 18+)
+1. In Stripe → **Payment Links**, create:
+   - a **$5/month** recurring product "Deep Ball+" → paste its link into `plusUrl` in `public/support-config.js`
+   - a "Support Deep Ball" product with *customers choose what to pay* → `donateUrl`
+   - Settings → Billing → **Customer portal**: turn it on and copy the link → `manageUrl`
+   - Add a contact email → `contactEmail`
+2. Stripe → Developers → **Webhooks** → Add endpoint `https://deepball.pages.dev/api/stripe` with events
+   `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`.
+   Copy its **signing secret** (whsec_…) into Cloudflare → deepball → Settings → Variables and Secrets as a Secret named `STRIPE_WEBHOOK_SECRET`, then redeploy.
+3. Checkout links carry the player's ID (`client_reference_id`), so Plus unlocks on their account automatically and turns off if they cancel.
+
+Plus features: host duos (2v2) rooms in every mode, custom Deep Ball question packs, host 4/8-player tournaments, ⭐ supporter badge. Joining a friend's room or tournament is free. The owner account always has Plus.

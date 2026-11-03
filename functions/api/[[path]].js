@@ -32,6 +32,10 @@ async function schema(db) {
     db.prepare("CREATE TABLE IF NOT EXISTS mq (pid TEXT PRIMARY KEY, name TEXT, mode TEXT, t INTEGER)"),
     db.prepare("CREATE TABLE IF NOT EXISTS players (pid TEXT PRIMARY KEY, name TEXT, lname TEXT UNIQUE, elo INTEGER, w INTEGER, l INTEGER, d INTEGER, t INTEGER)"),
     db.prepare("CREATE TABLE IF NOT EXISTS rooms (code TEXT PRIMARY KEY, host TEXT, name TEXT, mode TEXT, match_id TEXT, t INTEGER)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS plus (pid TEXT PRIMARY KEY, active INTEGER, customer TEXT, sub TEXT, t INTEGER)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS packs (pid TEXT PRIMARY KEY, prompts TEXT, t INTEGER)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS lobbies (code TEXT PRIMARY KEY, data TEXT, v INTEGER, t INTEGER)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS tours (code TEXT PRIMARY KEY, data TEXT, v INTEGER, t INTEGER)"),
     db.prepare("CREATE TABLE IF NOT EXISTS verdicts (prompt TEXT, ans TEXT, valid INTEGER, score INTEGER, why TEXT, PRIMARY KEY (prompt, ans))"),
   ]);
   schemaReady = true;
@@ -215,14 +219,15 @@ async function rate(db, id) {
   if (!(await save(db, id, row.m, row.v))) return; // someone else is rating it
   const m = row.m, res = m.s1 > m.s2 ? 1 : m.s1 < m.s2 ? 0 : 0.5;
   const get = async pid => (await db.prepare("SELECT elo FROM players WHERE pid=?").bind(pid).first())?.elo ?? 1000;
-  const [e1, e2] = [await get(m.p1), await get(m.p2)];
+  const avg = async sl => { const ps = sideMembers(m, sl); let t = 0; for (const p of ps) t += await get(p); return t / ps.length; };
+  const [e1, e2] = [await avg(1), await avg(2)];
   const exp = 1 / (1 + 10 ** ((e2 - e1) / 400)), d = Math.round(32 * (res - exp));
   const up = (pid, name, delta, w, l, dr) => db.prepare(
     `INSERT INTO players (pid,name,lname,elo,w,l,d,t) VALUES (?1,?2,NULL,1000+?3,?4,?5,?6,?7)
      ON CONFLICT(pid) DO UPDATE SET elo=elo+?3, w=w+?4, l=l+?5, d=d+?6, t=?7`).bind(pid, name, delta, w, l, dr, Date.now());
   await db.batch([
-    up(m.p1, m.n1, d, res === 1 ? 1 : 0, res === 0 ? 1 : 0, res === 0.5 ? 1 : 0),
-    up(m.p2, m.n2, -d, res === 0 ? 1 : 0, res === 1 ? 1 : 0, res === 0.5 ? 1 : 0),
+    ...sideMembers(m, 1).map(p => up(p, m.n1, d, res === 1 ? 1 : 0, res === 0 ? 1 : 0, res === 0.5 ? 1 : 0)),
+    ...sideMembers(m, 2).map(p => up(p, m.n2, -d, res === 0 ? 1 : 0, res === 1 ? 1 : 0, res === 0.5 ? 1 : 0)),
   ]);
 }
 
@@ -377,9 +382,10 @@ function viewDraft(m, slot) {
 }
 
 function view(m, pid) {
-  const slot = m.p1 === pid ? 1 : m.p2 === pid ? 2 : 0;
+  const slot = slotOf(m, pid);
   if (!slot) return null;
   const v = viewMode(m, slot);
+  v.meStar = !!m["st" + slot]; v.themStar = !!m["st" + (slot === 1 ? 2 : 1)]; v.duo = !!m.duo; v.custom = !!m.custom; v.tour = m.tour || null;
   v.trolls = (m.troll || []).filter(t => t.to === slot && Date.now() - t.t < 15000).map(({ k, t }) => ({ k, t }));
   return v;
 }
@@ -403,6 +409,95 @@ function fingerprint(str) { // FNV-1a, enough to tell "something changed"
   return (h >>> 0).toString(36);
 }
 
+// Which side a player is on. Duos matches have two players per side; teammates share their side's controls.
+function slotOf(m, pid) {
+  if (m.p1 === pid || m.mates?.[1]?.includes(pid)) return 1;
+  if (m.p2 === pid || m.mates?.[2]?.includes(pid)) return 2;
+  return 0;
+}
+const sideMembers = (m, sl) => m.mates?.[sl] || [sl === 1 ? m.p1 : m.p2];
+
+// Deep Ball+: active Stripe subscription, or the owner.
+async function isPlus(db, pid) {
+  if (await isAdmin(pid)) return true;
+  const r = await db.prepare("SELECT active FROM plus WHERE pid=?").bind(pid).first();
+  return !!r?.active;
+}
+async function stars(db, m) { // supporter badges shown next to names in a match
+  const any = async sl => { for (const p of sideMembers(m, sl)) if (p !== "bot" && await isPlus(db, p)) return true; return false; };
+  m.st1 = await any(1); m.st2 = await any(2); return m;
+}
+async function stripeVerify(secret, header, raw) {
+  const parts = Object.fromEntries((header || "").split(",").map(x => x.split("=")));
+  if (!parts.t || !parts.v1 || Math.abs(Date.now() / 1000 - +parts.t) > 600) return false;
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${parts.t}.${raw}`));
+  const hex = [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, "0")).join("");
+  return hex === parts.v1;
+}
+
+async function loadT(db, table, code) {
+  const r = await db.prepare(`SELECT data,v FROM ${table} WHERE code=?`).bind(code).first();
+  return r ? { d: JSON.parse(r.data), v: r.v } : null;
+}
+async function saveT(db, table, code, d, v) {
+  const r = await db.prepare(`UPDATE ${table} SET data=?, v=v+1, t=? WHERE code=? AND v=?`).bind(JSON.stringify(d), Date.now(), code, v).run();
+  return r.meta.changes === 1;
+}
+async function insertT(db, table, mk) {
+  for (let i = 0; i < 6; i++) {
+    const code = mk();
+    const r = await db.prepare(`INSERT OR IGNORE INTO ${table} (code,data,v,t) VALUES (?,?,0,?)`).bind(code, "{}", Date.now()).run();
+    if (r.meta.changes === 1) return code;
+  }
+  return null;
+}
+// Start a match from a lobby: 1v1 or duos (members 0 & 2 vs 1 & 3), optional custom question pack.
+async function matchFromLobby(db, L) {
+  const M = L.members;
+  let m;
+  if (L.duo) {
+    const A = [M[0], M[2]], B = [M[1], M[3]];
+    m = newMatch(A[0].pid, `${A[0].name} & ${A[1].name}`, B[0].pid, `${B[0].name} & ${B[1].name}`, L.mode);
+    m.mates = { 1: A.map(x => x.pid), 2: B.map(x => x.pid) }; m.duo = true;
+  } else m = newMatch(M[0].pid, M[0].name, M[1].pid, M[1].name, L.mode);
+  if (L.pack?.length && L.mode === "deep") {
+    const pk = shuffle(L.pack); while (pk.length < ROUNDS) pk.push(...shuffle(L.pack));
+    m.prompts = pk.slice(0, ROUNDS); m.custom = true;
+  }
+  if (L.tour) m.tour = L.tour;
+  return createMatch(db, await stars(db, m));
+}
+
+// Tournaments: single elimination. Byes when the bracket isn't full.
+function winnerOf(m) { return m.s1 > m.s2 ? m.p1 : m.s2 > m.s1 ? m.p2 : (m.tie ||= Math.random() < .5 ? m.p1 : m.p2); }
+async function advanceTour(db, code) {
+  for (let tries = 0; tries < 3; tries++) {
+    const row = await loadT(db, "tours", code); if (!row) return null;
+    const T = row.d; if (T.status !== "live") return T;
+    const round = T.rounds[T.rounds.length - 1]; let changed = false;
+    for (const g of round) {
+      if (g.winner) continue;
+      if (!g.b) { g.winner = g.a; changed = true; continue; }
+      if (!g.match) {
+        const m = newMatch(g.a.pid, g.a.name, g.b.pid, g.b.name, T.mode); m.tour = code;
+        g.match = await createMatch(db, await stars(db, m)); changed = true; continue;
+      }
+      const fresh = await load(db, g.match); // players' own match screens keep their match moving
+      if (fresh?.m.done) { const w = winnerOf(fresh.m); g.winner = w === g.a.pid ? g.a : g.b; g.score = `${fresh.m.s1}-${fresh.m.s2}`; changed = true; }
+    }
+    if (round.every(g => g.winner)) {
+      const alive = round.map(g => g.winner);
+      if (alive.length === 1) { T.status = "done"; T.champ = alive[0]; }
+      else { const next = []; for (let i = 0; i < alive.length; i += 2) next.push({ a: alive[i], b: alive[i + 1] || null }); T.rounds.push(next); }
+      changed = true;
+    }
+    if (!changed) return T;
+    if (await saveT(db, "tours", code, T, row.v)) continue;
+  }
+  return (await loadT(db, "tours", code))?.d;
+}
+
 async function nameFor(db, pid, fallback) {
   const r = await db.prepare("SELECT name FROM players WHERE pid=?").bind(pid).first();
   return r?.name || clean(fallback, 20) || "Player";
@@ -415,12 +510,29 @@ export async function onRequest({ request, env, params }) {
   ORIGIN = new URL(request.url).origin; ASSETS = env.ASSETS;
   await schema(env.DB);
   const db = env.DB, path = (params.path || []).join("/");
-  const body = request.method === "POST" ? await request.json().catch(() => ({})) : {};
+  const rawBody = request.method === "POST" ? await request.text().catch(() => "") : "";
+  let body = {}; try { body = rawBody ? JSON.parse(rawBody) : {}; } catch { body = {}; }
   const url = new URL(request.url);
   const now = Date.now();
 
+  // Stripe tells us when someone subscribes or cancels (set STRIPE_WEBHOOK_SECRET in Cloudflare).
+  if (path === "stripe") {
+    const raw = rawBody;
+    if (!env.STRIPE_WEBHOOK_SECRET || !(await stripeVerify(env.STRIPE_WEBHOOK_SECRET, request.headers.get("stripe-signature"), raw)))
+      return json({ error: "bad signature" }, 400);
+    const ev = JSON.parse(raw), o = ev.data?.object || {};
+    if (ev.type === "checkout.session.completed" && o.client_reference_id && o.mode === "subscription")
+      await db.prepare(`INSERT INTO plus (pid,active,customer,sub,t) VALUES (?,1,?,?,?) ON CONFLICT(pid) DO UPDATE SET active=1, customer=excluded.customer, sub=excluded.sub, t=excluded.t`)
+        .bind(o.client_reference_id, o.customer || "", o.subscription || "", now).run();
+    if (ev.type === "customer.subscription.updated" || ev.type === "customer.subscription.deleted") {
+      const on = ev.type === "customer.subscription.updated" && ["active", "trialing", "past_due"].includes(o.status) ? 1 : 0;
+      await db.prepare("UPDATE plus SET active=?, t=? WHERE customer=?").bind(on, now, o.customer || "-").run();
+    }
+    return json({ received: true });
+  }
+
   if (path === "leaderboard") {
-    const r = await db.prepare("SELECT name, elo, w, l, d FROM players WHERE w+l+d > 0 ORDER BY elo DESC, w DESC LIMIT 50").all();
+    const r = await db.prepare("SELECT p.name, p.elo, p.w, p.l, p.d, COALESCE(x.active,0) AS plus FROM players p LEFT JOIN plus x ON x.pid=p.pid WHERE p.w+p.l+p.d > 0 ORDER BY p.elo DESC, p.w DESC LIMIT 50").all();
     return json({ players: r.results });
   }
 
@@ -438,9 +550,10 @@ export async function onRequest({ request, env, params }) {
   if (path === "me") {
     const p = await db.prepare("SELECT name, elo, w, l, d, lname FROM players WHERE pid=?").bind(pid).first();
     const admin = await isAdmin(pid);
-    if (!p) return json({ name: null, elo: 1000, w: 0, l: 0, d: 0, rank: null, admin });
+    const plus = await isPlus(db, pid);
+    if (!p) return json({ name: null, elo: 1000, w: 0, l: 0, d: 0, rank: null, admin, plus });
     const rank = (p.w + p.l + p.d) ? (await db.prepare("SELECT COUNT(*) AS n FROM players WHERE elo > ? AND w+l+d > 0").bind(p.elo).first()).n + 1 : null;
-    return json({ name: p.lname ? p.name : null, elo: p.elo, w: p.w, l: p.l, d: p.d, rank, admin });
+    return json({ name: p.lname ? p.name : null, elo: p.elo, w: p.w, l: p.l, d: p.d, rank, admin, plus });
   }
 
   if (path === "profile") {
@@ -465,7 +578,7 @@ export async function onRequest({ request, env, params }) {
     if (other) {
       const got = await db.prepare("DELETE FROM mq WHERE pid=? RETURNING pid").bind(other.pid).first();
       if (got) {
-        const id = await createMatch(db, newMatch(other.pid, other.name, pid, name, mode));
+        const id = await createMatch(db, await stars(db, newMatch(other.pid, other.name, pid, name, mode)));
         await db.batch([
           db.prepare("INSERT OR REPLACE INTO assign (pid,match_id,t) VALUES (?,?,?)").bind(other.pid, id, now),
           db.prepare("DELETE FROM mq WHERE pid=?").bind(pid),
@@ -480,39 +593,111 @@ export async function onRequest({ request, env, params }) {
   if (path === "leave") {
     await db.batch([db.prepare("DELETE FROM mq WHERE pid=?").bind(pid), db.prepare("DELETE FROM assign WHERE pid=?").bind(pid),
       db.prepare("DELETE FROM rooms WHERE host=? AND match_id IS NULL").bind(pid)]);
+    if (body.code) { // leave a lobby that hasn't started
+      const code = clean(body.code, 8).toUpperCase(), row = await loadT(db, "lobbies", code);
+      if (row && !row.d.match) { row.d.members = row.d.members.filter(x => x.pid !== pid); if (row.d.members.length) await saveT(db, "lobbies", code, row.d, row.v); else await db.prepare("DELETE FROM lobbies WHERE code=?").bind(code).run(); }
+    }
     return json({ ok: true });
   }
 
   if (path === "practice") {
-    const id = await createMatch(db, newMatch(pid, await nameFor(db, pid, body.name), "bot", "AI Opponent", pickMode(body.mode)));
+    const id = await createMatch(db, await stars(db, newMatch(pid, await nameFor(db, pid, body.name), "bot", "AI Opponent", pickMode(body.mode))));
     return json({ match: id });
   }
 
-  // Private rooms: the host gets a code, a friend enters it, and the match starts for both.
+  // Lobbies: the host gets a code, friends enter it. 1v1 starts at 2 players, duos (Plus) at 4.
   if (path === "room/create") {
-    await db.prepare("DELETE FROM rooms WHERE t<?").bind(now - 30 * 60000).run();
-    for (let i = 0; i < 5; i++) {
-      const code = roomCode();
-      const r = await db.prepare("INSERT OR IGNORE INTO rooms (code,host,name,mode,match_id,t) VALUES (?,?,?,?,NULL,?)")
-        .bind(code, pid, await nameFor(db, pid, body.name), pickMode(body.mode), now).run();
-      if (r.meta.changes === 1) return json({ code });
+    const duo = !!body.duo, custom = !!body.custom, mode = pickMode(body.mode);
+    if ((duo || custom) && !(await isPlus(db, pid))) return json({ error: "Duos and custom questions are Deep Ball+ features.", plus: true }, 402);
+    let pack = null;
+    if (custom) {
+      if (mode !== "deep") return json({ error: "Custom questions work in Deep Ball mode." }, 400);
+      pack = JSON.parse((await db.prepare("SELECT prompts FROM packs WHERE pid=?").bind(pid).first())?.prompts || "[]");
+      if (pack.length < 1) return json({ error: "Write some questions first (Support tab → My questions)." }, 400);
     }
-    return json({ error: "Could not make a room. Try again." }, 503);
+    await db.prepare("DELETE FROM lobbies WHERE t<?").bind(now - 60 * 60000).run();
+    const code = await insertT(db, "lobbies", roomCode);
+    if (!code) return json({ error: "Could not make a room. Try again." }, 503);
+    const L = { host: pid, mode, duo, pack, members: [{ pid, name: await nameFor(db, pid, body.name) }], match: null };
+    await db.prepare("UPDATE lobbies SET data=? WHERE code=?").bind(JSON.stringify(L), code).run();
+    return json({ code, size: duo ? 4 : 2 });
   }
   if (path === "room/status") {
-    const r = await db.prepare("SELECT match_id FROM rooms WHERE code=? AND host=?").bind(clean(body.code, 8).toUpperCase(), pid).first();
-    return r ? json({ match: r.match_id }) : json({ error: "Room closed." }, 404);
+    const row = await loadT(db, "lobbies", clean(body.code, 8).toUpperCase());
+    if (!row || !row.d.members?.some(x => x.pid === pid)) return json({ error: "Room closed." }, 404);
+    const L = row.d;
+    return json({ match: L.match, mode: L.mode, duo: L.duo, custom: !!L.pack, size: L.duo ? 4 : 2,
+      members: L.members.map((x, i) => ({ name: x.name, team: L.duo ? (i % 2 ? "B" : "A") : null, you: x.pid === pid })) });
   }
   if (path === "room/join") {
     const code = clean(body.code, 8).toUpperCase();
-    const room = await db.prepare("SELECT host,name,mode,match_id FROM rooms WHERE code=?").bind(code).first();
-    if (!room) return json({ error: "No room with that code. Check it and try again." }, 404);
-    if (room.host === pid) return json({ error: "That's your own room. Send the code to a friend." }, 400);
-    if (room.match_id) return json({ error: "That room already started." }, 409);
-    const id = await createMatch(db, newMatch(room.host, room.name, pid, await nameFor(db, pid, body.name), room.mode));
-    const r = await db.prepare("UPDATE rooms SET match_id=? WHERE code=? AND match_id IS NULL").bind(id, code).run();
-    if (r.meta.changes !== 1) return json({ error: "That room already started." }, 409);
-    return json({ match: id });
+    if (/^T[A-Z0-9]{5}$/.test(code) && await loadT(db, "tours", code)) return json({ tour: code });
+    for (let i = 0; i < 3; i++) {
+      const row = await loadT(db, "lobbies", code);
+      if (!row) return json({ error: "No room with that code. Check it and try again." }, 404);
+      const L = row.d, size = L.duo ? 4 : 2;
+      if (L.match) return json(L.members.some(x => x.pid === pid) ? { match: L.match } : { error: "That room already started." }, L.members.some(x => x.pid === pid) ? 200 : 409);
+      if (L.members.some(x => x.pid === pid)) return json(L.duo ? { lobby: code } : { error: "That's your own room. Send the code to a friend." }, L.duo ? 200 : 400);
+      L.members.push({ pid, name: await nameFor(db, pid, body.name) });
+      if (L.members.length >= size) L.match = await matchFromLobby(db, L);
+      if (await saveT(db, "lobbies", code, L, row.v)) return json(L.match ? { match: L.match } : { lobby: code });
+    }
+    return json({ error: "Busy, try again." }, 503);
+  }
+
+  // Custom question packs (Plus): one prompt per line, up to 30.
+  if (path === "pack") {
+    if (body.prompts === undefined) return json({ prompts: JSON.parse((await db.prepare("SELECT prompts FROM packs WHERE pid=?").bind(pid).first())?.prompts || "[]") });
+    if (!(await isPlus(db, pid))) return json({ error: "Custom questions are a Deep Ball+ feature.", plus: true }, 402);
+    const list = (Array.isArray(body.prompts) ? body.prompts : []).map(x => clean(x, 120)).filter(x => x.length >= 8).slice(0, 30);
+    await db.prepare("INSERT INTO packs (pid,prompts,t) VALUES (?,?,?) ON CONFLICT(pid) DO UPDATE SET prompts=excluded.prompts, t=excluded.t").bind(pid, JSON.stringify(list), now).run();
+    return json({ ok: true, prompts: list });
+  }
+
+  // Tournaments (hosting is Plus, joining is free).
+  if (path === "tour/create") {
+    if (!(await isPlus(db, pid))) return json({ error: "Hosting tournaments is a Deep Ball+ feature.", plus: true }, 402);
+    const size = body.size === 8 ? 8 : 4;
+    const code = await insertT(db, "tours", () => "T" + roomCode());
+    if (!code) return json({ error: "Could not make a tournament. Try again." }, 503);
+    const T = { host: pid, mode: pickMode(body.mode), size, players: [{ pid, name: await nameFor(db, pid, body.name) }], rounds: [], status: "lobby", champ: null };
+    await db.prepare("UPDATE tours SET data=? WHERE code=?").bind(JSON.stringify(T), code).run();
+    return json({ code });
+  }
+  if (path === "tour/join" || path === "tour/start" || path === "tour/status") {
+    const code = clean(body.code, 8).toUpperCase();
+    for (let i = 0; i < 3; i++) {
+      const row = await loadT(db, "tours", code);
+      if (!row) return json({ error: "No tournament with that code." }, 404);
+      const T = row.d;
+      if (path === "tour/join" && !T.players.some(x => x.pid === pid)) {
+        if (T.status !== "lobby") return json({ error: "That tournament already started." }, 409);
+        if (T.players.length >= T.size) return json({ error: "That tournament is full." }, 409);
+        T.players.push({ pid, name: await nameFor(db, pid, body.name) });
+        if (!(await saveT(db, "tours", code, T, row.v))) continue;
+      }
+      if (path === "tour/start") {
+        if (T.host !== pid) return json({ error: "Only the host can start it." }, 403);
+        if (T.status !== "lobby") break;
+        if (T.players.length < 3) return json({ error: "Need at least 3 players to start." }, 400);
+        const ps = shuffle(T.players), slots = T.players.length > 4 ? 8 : 4, r1 = [];
+        while (ps.length < slots) ps.push(null);
+        for (let k = 0; k < slots; k += 2) r1.push({ a: ps[k] || ps[k + 1], b: ps[k] ? ps[k + 1] : null });
+        T.rounds = [r1]; T.status = "live";
+        if (!(await saveT(db, "tours", code, T, row.v))) continue;
+      }
+      break;
+    }
+    const T = await advanceTour(db, code);
+    if (!T) return json({ error: "No tournament with that code." }, 404);
+    const me = T.players.find(x => x.pid === pid);
+    let myMatch = null;
+    const cur = T.rounds[T.rounds.length - 1] || [];
+    for (const g of cur) if (!g.winner && g.match && (g.a?.pid === pid || g.b?.pid === pid)) myMatch = g.match;
+    const pub = x => x ? { name: x.name, you: x.pid === pid } : null;
+    return json({ code, mode: T.mode, size: T.size, status: T.status, host: T.host === pid, joined: !!me,
+      players: T.players.map(pub), rounds: T.rounds.map(r => r.map(g => ({ a: pub(g.a), b: pub(g.b), winner: pub(g.winner), score: g.score || null, live: !!g.match && !g.winner }))),
+      champ: pub(T.champ), myMatch });
   }
 
   // Long-poll: the phone sends a fingerprint of what it already has (h). We hold the request open
@@ -537,7 +722,7 @@ export async function onRequest({ request, env, params }) {
     for (let i = 0; i < 3; i++) {
       const row = await load(db, id);
       if (!row) return json({ error: "match not found" }, 404);
-      const { m, v } = row, slot = m.p1 === pid ? 1 : m.p2 === pid ? 2 : 0;
+      const { m, v } = row, slot = slotOf(m, pid);
       if (!slot) return json({ error: "not your match" }, 403);
       const r = m.round;
       if (m.done || body.round !== r || now < m.rs) return json({ ok: false });
@@ -565,7 +750,7 @@ export async function onRequest({ request, env, params }) {
     for (let i = 0; i < 3; i++) {
       const row = await load(db, id);
       if (!row) return json({ error: "match not found" }, 404);
-      const { m, v } = row, slot = m.p1 === pid ? 1 : m.p2 === pid ? 2 : 0;
+      const { m, v } = row, slot = slotOf(m, pid);
       if (!slot) return json({ error: "not your match" }, 403);
       m.troll = (m.troll || []).filter(t => now - t.t < 15000);
       if (m.troll.some(t => now - t.t < 2500)) return json({ error: "Slow down, let the last one land 😈" }, 429);
@@ -580,7 +765,7 @@ export async function onRequest({ request, env, params }) {
     for (let i = 0; i < 3; i++) {
       const row = await load(db, id);
       if (!row) return json({ error: "match not found" }, 404);
-      const { m, v } = row, slot = m.p1 === pid ? 1 : m.p2 === pid ? 2 : 0;
+      const { m, v } = row, slot = slotOf(m, pid);
       if (!slot || m.mode !== "draft") return json({ error: "not your match" }, 403);
       const r = m.round;
       if (m.done || body.round !== r || now < m.rs || now > m.rs + DRAFT_SECS * 1000 + 1500) return json({ error: "Time's up for this pick." }, 409);
@@ -603,7 +788,7 @@ export async function onRequest({ request, env, params }) {
     for (let i = 0; i < 3; i++) {
       const row = await load(db, id);
       if (!row) return json({ error: "match not found" }, 404);
-      const { m, v } = row, slot = m.p1 === pid ? 1 : m.p2 === pid ? 2 : 0;
+      const { m, v } = row, slot = slotOf(m, pid);
       if (!slot || m.mode !== "guess") return json({ error: "not your match" }, 403);
       const r = m.round, end = m.rs + CLUE_MS * CLUES;
       if (m.done || body.round !== r || m.g[r] || now < m.rs || now > end) return json({ error: "round closed" }, 409);
@@ -624,7 +809,7 @@ export async function onRequest({ request, env, params }) {
     for (let i = 0; i < 3; i++) {
       const row = await load(db, id);
       if (!row) return json({ error: "match not found" }, 404);
-      const { m, v } = row, slot = m.p1 === pid ? 1 : m.p2 === pid ? 2 : 0;
+      const { m, v } = row, slot = slotOf(m, pid);
       if (!slot) return json({ error: "not your match" }, 403);
       const r = m.round;
       if (m.done || body.round !== r || now < m.rs || now > m.rs + SECS * 1000 + 1500) return json({ error: "round closed" }, 409);
