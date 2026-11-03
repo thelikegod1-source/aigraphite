@@ -536,6 +536,21 @@ button.ghost:hover,.tabs .tab:hover{box-shadow:none;border-color:#3a4c6a}
 .hp-btn.blue{background:#2f62d8!important;color:#fff!important}.hp-btn.red{background:#c63a3a!important;color:#fff!important}
 .hp-btn:active{filter:brightness(1.2)}
 .hp-help{text-align:center}
+
+/* Street Hoops 3D */
+.h3{display:flex;flex-direction:column;gap:12px}
+.h3-wrap{position:relative;width:100%;height:min(72vh,640px);border-radius:8px;overflow:hidden;border:1px solid var(--line);background:#000;touch-action:none;user-select:none;-webkit-user-select:none}
+.h3-wrap canvas{display:block;width:100%;height:100%}
+.h3-banner{position:absolute;left:0;right:0;top:0;height:30px;overflow:hidden;background:linear-gradient(90deg,rgba(0,0,0,.55),rgba(0,0,0,.35));border-bottom:2px solid #ffd23a;z-index:2;pointer-events:none}
+.h3-run{white-space:nowrap;font-family:var(--display);font-weight:800;font-size:1.05rem;letter-spacing:.08em;color:#ffd23a;line-height:30px;animation:tick 14s linear infinite;width:max-content}
+.h3-poss{position:absolute;left:12px;top:40px;z-index:2;font-family:var(--display);font-weight:800;text-transform:uppercase;font-size:.95rem;letter-spacing:.06em;background:rgba(0,0,0,.5);padding:3px 10px;border-left:3px solid #ffd23a;pointer-events:none}
+.h3-stick{position:absolute;left:18px;bottom:18px;width:120px;height:120px;border-radius:50%;background:rgba(255,255,255,.12);border:2px solid rgba(255,255,255,.35);z-index:3;display:grid;place-items:center;touch-action:none}
+.h3-stick i{width:52px;height:52px;border-radius:50%;background:rgba(255,255,255,.75);box-shadow:0 4px 12px rgba(0,0,0,.4);transition:transform .05s}
+.h3-shoot{position:absolute;right:18px;bottom:22px;width:110px;height:110px;border-radius:50%!important;padding:0;z-index:3;flex:none;background:rgba(255,178,56,.92)!important;color:#16110a!important;font-size:1.2rem;touch-action:none}
+.h3-shoot svg{position:absolute;inset:-8px;width:calc(100% + 16px);height:calc(100% + 16px);transform:rotate(-90deg);pointer-events:none}
+.h3-shoot circle{fill:none;stroke:#ffb238;stroke-width:6;stroke-dasharray:289;stroke-dashoffset:289;transition:stroke .1s}
+.h3-wrap .hp-msg{z-index:4;top:22%}
+.h3-wrap .hp-end{z-index:5}
 </style>
 </head>
 <body>

@@ -44,7 +44,6 @@
       lastShot = null;
     }
     resetPlay(null);
-    window.__hoops = { get P() { return P; }, ball, get score() { return score; } }; // for testing
 
     // ---------- input ----------
     const press = (i, v) => { if (P[i]) P[i].down = v; };

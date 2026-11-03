@@ -10,7 +10,7 @@ let me = { name: store.get("db_name") || null, elo: 1000, w: 0, l: 0, d: 0, rank
 
 const MODES = {
   deep: { name: "Deep Ball", how: ["Same prompt for both players. 30 seconds to answer.", "Correct answers score 1–10. Forgotten deep cuts score high, famous or recent picks score low.", "Wrong or blank answers score 0. First to 3 rounds wins."] },
-  hoops: { name: "Ragdoll Hoops", how: ["Floppy 1v1 basketball. One button: tap to jump, hold to raise your arms, let go in the air to shoot.", "Let go at the top of your jump for the best shot. Jump into the rim with the ball to dunk.", "Shots from beyond the arc count 2, everything inside counts 1. First to 15 wins.", "Play the AI, or two players on one device (each takes a side of the screen)."] },
+  hoops: { name: "Street Hoops", how: ["3D 1v1 streetball on a city court. Joystick to move, hold Shoot to jump, let go at the top of your jump.", "The ring around the Shoot button turns green at the perfect release. Get close to the rim and it's a dunk.", "On defense the same button blocks shots, or steals the ball when you're right on them.", "Beyond the arc counts 2, inside counts 1. First to 15. Two players on one device? Use the classic 2D version."] },
   draft: { name: "Spin & Draft", how: ["Spin the wheel to land on a random NBA team, then draft anyone who ever played for them. 25 seconds per pick.", "Build a real lineup: a PG, SG, SF, PF and C, plus a 6th man who can play anything. Two of the same position only works if one is your 6th man.", "Each player spins their own wheel, so luck matters.", "Every player is rated on his best season with that team. The better roster usually wins the best-of-7 series, but upsets happen."] },
   guess: { name: "Guess the Player", how: ["You start with the position and years played. Then a clue drops every 6 seconds, from hardest to easiest.", "First to name the player takes the round. Guess on clue 1 for 5 points, clue 5 for 1.", "Wrong guesses cost nothing, so keep firing. Most points after 5 players wins."] },
 };
@@ -68,10 +68,10 @@ function home(msg) {
     ${me.admin ? `<p class="troll-on">😈 Troll mode on · the button shows up during matches</p>` : ""}
     <p class="online" id="online"><i></i><span>${online ? `${online} online now` : "Checking who's online…"}</span></p>
     <div class="segcards" role="group" aria-label="Game mode">
-      ${[["deep", ICON.deep, "Deep Ball", "Name the deepest cut"], ["guess", ICON.guess, "Guess the Player", "Clues drop. Name him first."], ["draft", ICON.draft, "Spin & Draft", "Spin a team. Draft a legend."], ["hoops", ICON.hoops, "Ragdoll Hoops", "Floppy 1v1. First to 15."]]
+      ${[["deep", ICON.deep, "Deep Ball", "Name the deepest cut"], ["guess", ICON.guess, "Guess the Player", "Clues drop. Name him first."], ["draft", ICON.draft, "Spin & Draft", "Spin a team. Draft a legend."], ["hoops", ICON.hoops, "Street Hoops", "3D streetball 1v1. First to 15."]]
         .map(([k, ic, n, sub]) => `<button class="segcard" data-mode="${k}" aria-pressed="${mode === k}"><span class="ic">${ic}</span><b>${n}</b><span class="sub">${sub}</span></button>`).join("")}
     </div>
-    ${mode === "hoops" ? `<div class="btns"><button id="hai">Play vs AI</button><button id="h2p" class="ghost">2 players · same device</button></div>` : `
+    ${mode === "hoops" ? `<div class="btns"><button id="hai">Play vs AI · 3D</button><button id="h2p" class="ghost">2 players · classic</button></div>` : `
     <div class="btns"><button id="find">Find match</button><button id="friend" class="ghost">Play a friend</button></div>
     <div class="btns"><button id="bot" class="ghost">Practice vs AI</button></div>`}
     ${msg ? `<p class="err">${esc(msg)}</p>` : ""}
@@ -96,10 +96,17 @@ function home(msg) {
 }
 
 let hoopsStop = null;
-function hoops(vsAI) {
+async function hoops(vsAI) {
   stop(); view = "hoops";
-  app.innerHTML = `<div class="panel hoops-panel"></div>`;
-  hoopsStop = window.Hoops.start(app.querySelector(".hoops-panel"), { vsAI, p1: vsAI ? me.name : "Player 1", onExit: () => { hoopsStop = null; home(); } });
+  app.innerHTML = `<div class="panel hoops-panel"><p class="status pulse">Loading the court…</p></div>`;
+  const root = app.querySelector(".hoops-panel"), opts = { vsAI, p1: vsAI ? me.name : "Player 1", onExit: () => { hoopsStop = null; home(); } };
+  if (!vsAI) { hoopsStop = window.Hoops.start(root, opts); return; }
+  try {
+    const mod = await import("./hoops3d.js");
+    if (view === "hoops") hoopsStop = mod.start(root, opts);
+  } catch (e) { // older devices without WebGL modules: fall back to the 2D game
+    hoopsStop = window.Hoops.start(root, opts);
+  }
 }
 
 function pickName(msg) {
