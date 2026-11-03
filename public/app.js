@@ -844,8 +844,10 @@ async function support(msg) {
   </div>`}
   <div class="panel">
     <span class="label">Donate</span>
-    <p class="small">Any amount helps. One-time, no account needed.</p>
-    <div class="btns">${link(cfg.donateUrl, "Donate 💛")}</div>
+    <p class="small">Any amount helps.</p>
+    ${cfg.donateUrl ? `<div class="btns">${link(cfg.donateUrl, "Donate 💛")}</div>` : ""}
+    <div class="dm-tip"><span class="pi"></span><div><b>Tip with Apple Pay</b><p>DM <b>@wyaclaw</b> on Discord or TikTok and I'll send you how to tip.</p></div></div>
+    <div class="btns"><button class="ghost" id="copyh">Copy @wyaclaw</button><a class="btn ghostlink" href="https://www.tiktok.com/@wyaclaw" target="_blank" rel="noopener">Open TikTok</a></div>
   </div>
   <div class="panel policy">
     <span class="label">Billing &amp; refunds</span>
@@ -853,6 +855,7 @@ async function support(msg) {
     <p class="small">Payments are processed by Stripe; Deep Ball never sees your card details. Contact: ${cfg.contactEmail ? `<b>${esc(cfg.contactEmail)}</b> · ` : ""}@wyaclaw on TikTok &amp; Discord.</p>
   </div>`;
   wireNav();
+  if ($("#copyh")) $("#copyh").onclick = async () => { try { await navigator.clipboard.writeText("wyaclaw"); $("#copyh").textContent = "Copied"; } catch { $("#copyh").textContent = "@wyaclaw"; } };
   if ($("#recheck")) $("#recheck").onclick = () => support(me.plus ? "Plus is active." : "");
   if ($("#host")) $("#host").onclick = () => friend();
   if ($("#tour")) $("#tour").onclick = () => tourCreate();
