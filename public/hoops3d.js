@@ -10,10 +10,13 @@ const MOVES = { cross: { key: "KeyQ", label: "Cross", dur: 0.34, burst: 4.6 }, b
   spin: { key: "KeyF", label: "Spin", dur: 0.5, burst: 4.8 }, stepback: { key: "KeyC", label: "Step back", dur: 0.36, burst: 4.4 } };
 
 export function start(root, opts) {
+  // online: host runs the game, guest sends inputs and draws the host's state
+  const ONLINE = opts.online || null, NET = ONLINE?.net, GUEST = ONLINE?.role === "guest", ME = GUEST ? 1 : 0;
+  const names = opts.names || [opts.p1 || "You", "AI"];
   root.innerHTML = `<div class="h3">
-    <div class="hp-top"><div class="hp-sc blue"><span>${esc(opts.p1 || "You")}</span><b id="hs0">0</b></div>
+    <div class="hp-top"><div class="hp-sc blue"><span>${esc(names[0])}</span><b id="hs0">0</b></div>
       <div class="hp-mid">First to ${TO_WIN}<small>2 beyond the arc · 1 inside</small></div>
-      <div class="hp-sc red"><b id="hs1">0</b><span>AI</span></div></div>
+      <div class="hp-sc red"><b id="hs1">0</b><span>${esc(names[1])}</span></div></div>
     <div class="h3-wrap" id="h3wrap">
       <div class="h3-banner"><div class="h3-run">STREET HOOPS · 1V1 · FIRST TO 15 · DEEP BALL · STREET HOOPS · 1V1 · FIRST TO 15 · DEEP BALL ·</div></div>
       <div class="hp-msg" id="hmsg"></div>
@@ -74,11 +77,22 @@ export function start(root, opts) {
     off.pos.set((Math.random() - .5) * 2, 0, 9.2); def.pos.set(0, 0, 5.2);
     for (const p of players) Object.assign(p, { y: 0, vy: 0, shooting: false, dunking: false, hasBall: false, move: null, stumble: 0, meter: 0 }) && p.vel.set(0, 0, 0);
     off.hasBall = true; off.hand = 1; ball.holder = off; ball.shot = null; ball.cool = 0;
-    root.querySelector("#hlbl").textContent = team === 0 ? "Shoot" : "Block";
-    root.querySelector("#hmoves").classList.toggle("off", team !== 0);
+    posUI(team);
     ai.thinkAt = 0; ai.shootAt = 0; ai.holdUntil = 0; possClock = 12;
   }
-  setupPossession(0);
+  function posUI(team) {
+    root.querySelector("#hlbl").textContent = team === ME ? "Shoot" : "Block";
+    root.querySelector("#hmoves").classList.toggle("off", team !== ME);
+  }
+  // messages for one player: shown here if it's us, sent over if it's the online opponent
+  function apply(ev) {
+    if (ev.fb) { feedback(ev.fb[0], ev.fb[1]); if (ev.fb[1] === "g") { buzz(25); tone(880, .08, "triangle", .1); tone(1320, .12, "triangle", .08, .06); } }
+    if (ev.m) msg(ev.m[0], ev.m[1]);
+    if (ev.bz) buzz(ev.bz);
+  }
+  function say(team, ev) { if (team === ME) apply(ev); else if (NET) NET.send(ev); }
+  const toText = (to, why) => why === "REB" ? (to === ME ? "REBOUND · YOUR BALL" : "THEIR REBOUND") : why;
+  if (!GUEST) setupPossession(0); else posUI(0);
 
   // ---------- input ----------
   const stick = root.querySelector("#hstick"), knob = root.querySelector("#hknob");
@@ -116,7 +130,7 @@ export function start(root, opts) {
     const m = pl.meter, w = greenWidth(pl), off = Math.abs(m - GREEN_C), green = off <= w / 2;
     const quality = green ? 1 : Math.max(0, 1 - (off - w / 2) * 3);
     const err = green ? 0.012 + contest * 0.05 : (1 - quality) * 0.26 + d * 0.006 + contest * 0.18 + Math.abs(Math.random() + Math.random() - 1) * 0.05;
-    if (pl.team === 0) { if (green) { feedback("GREEN!", "g"); buzz(25); tone(880, .08, "triangle", .1); tone(1320, .12, "triangle", .08, .06); } else feedback(m < GREEN_C ? (off > .2 ? "VERY EARLY" : "SLIGHTLY EARLY") : (off > .12 ? "VERY LATE" : "SLIGHTLY LATE"), "r"); }
+    if (pl.team === ME || NET) say(pl.team, { fb: green ? ["GREEN!", "g"] : [m < GREEN_C ? (off > .2 ? "VERY EARLY" : "SLIGHTLY EARLY") : (off > .12 ? "VERY LATE" : "SLIGHTLY LATE"), "r"] });
     const a = Math.random() * Math.PI * 2, target = RIM.clone().add(new THREE.Vector3(Math.cos(a) * err, 0.02, Math.sin(a) * err + 0.02));
     const T = 0.75 + d * 0.06, v = target.clone().sub(from).add(new THREE.Vector3(0, 0.5 * GRAV * T * T, 0)).divideScalar(T);
     ball.p.copy(from); ball.v.copy(v); ball.holder = null; pl.hasBall = false; ball.cool = 0.35; pl.released = t;
@@ -128,13 +142,16 @@ export function start(root, opts) {
     ball.shot = { team: pl.team, value: 1, dunk: true }; pl.vy = Math.max(pl.vy, 2.5); pl.shooting = false; pl.dunking = false; buzz(40); tone(140, .12, "sawtooth", .12);
   }
   function scored(team, val, dunked) {
-    score[team] += val; root.querySelector("#hs" + team).textContent = score[team];
-    msg(dunked ? "DUNK! +1" : val === 2 ? "+2 FROM DEEP" : "+1", 1200);
-    (team === 0 ? SFX.roundWin : SFX.roundLoss)(); buzz(30); pause = 1.3;
+    score[team] += val; NET?.send({ sc: [team, val, dunked ? 1 : 0, score[0], score[1]] }); showScore(team, val, dunked); pause = 1.3;
     if (score[team] >= TO_WIN) return finish(team);
     setTimeout(() => !over && setupPossession(1 - team), 1100);
   }
-  function turnover(to, why) { msg(why, 900); pause = 0.9; setTimeout(() => !over && setupPossession(to), 800); }
+  function showScore(team, val, dunked) {
+    root.querySelector("#hs0").textContent = score[0]; root.querySelector("#hs1").textContent = score[1]; netSwish = t;
+    msg(dunked ? "DUNK! +1" : val === 2 ? "+2 FROM DEEP" : "+1", 1200);
+    (team === ME ? SFX.roundWin : SFX.roundLoss)(); buzz(30);
+  }
+  function turnover(to, why) { msg(toText(to, why), 900); NET?.send({ to: [to, why] }); pause = 0.9; setTimeout(() => !over && setupPossession(to), 800); }
   function doMove(pl, kind) {
     if (!pl.hasBall || pl.shooting || pl.y > 0 || pl.move || (pl.moveCool || 0) > t) return;
     const M = MOVES[kind], fwd = fwdOf(pl), side = new THREE.Vector3(fwd.z, 0, -fwd.x);
@@ -147,14 +164,15 @@ export function start(root, opts) {
     tone(kind === "spin" ? 260 : 420, .05, "triangle", .07);
     // ankle breaker: defender close and caught leaning
     const o = players[1 - pl.team], gap = flat(o.pos).distanceTo(flat(pl.pos)), chance = { cross: .28, behind: .22, spin: .32, stepback: .22 }[kind];
-    if (gap < 1.5 && !o.stumble && o.y === 0 && Math.random() < chance) { o.stumble = t + 0.95; if (pl.team === 0) { msg("ANKLES!", 1000); buzz([20, 30, 20]); } }
+    if (gap < 1.5 && !o.stumble && o.y === 0 && Math.random() < chance) { o.stumble = t + 0.95; say(pl.team, { m: ["ANKLES!", 1000], bz: [20, 30, 20] }); }
   }
 
   // ---------- simulation ----------
-  function stepPlayer(pl, dt, moveX, moveZ, shootDown, shootWas) {
+  // stick (camera-relative) → direction on the court
+  function camToWorld(x, z) { const fwd = flat(RIM.clone().sub(camera.position)).normalize(), right = new THREE.Vector3(-fwd.z, 0, fwd.x); return fwd.multiplyScalar(-z).add(right.multiplyScalar(x)); }
+  function stepPlayer(pl, dt, moveX, moveZ, shootDown, shootWas, world) {
     const ground = pl.y <= 0.001, o = players[1 - pl.team];
-    const fwd = flat(RIM.clone().sub(camera.position)).normalize(), right = new THREE.Vector3(-fwd.z, 0, fwd.x);
-    const want = fwd.multiplyScalar(-moveZ).add(right.multiplyScalar(moveX)); if (want.lengthSq() > 1) want.normalize();
+    const want = world ? new THREE.Vector3(moveX, 0, moveZ) : camToWorld(moveX, moveZ); if (want.lengthSq() > 1) want.normalize();
     let sp = (pl.hasBall ? SPEED * 0.9 : SPEED) * (ground ? 1 : 0.3);
     if (pl.stumble > t) sp *= 0.08;
     if (pl.shooting && ground) sp *= 0.2;
@@ -181,6 +199,7 @@ export function start(root, opts) {
     }
     if (pl.shooting && pl.hasBall && !pl.dunking) {
       pl.meter += dt / METER_TIME;
+      if (rel && world && remote.relMeter != null) { pl.meter = remote.relMeter; remote.relMeter = null; } // the guest timed it on their own screen
       if (rel || pl.meter >= 1.05) release(pl);
     } else if (pl.dunking && pl.hasBall && rel) { pl.dunking = false; pl.meter = GREEN_C - 0.05; release(pl); } // let go early: layup
     // facing: toward motion, or the hoop when shooting / holding
@@ -205,7 +224,7 @@ export function start(root, opts) {
       pl.hands[pl.hand].getWorldPosition(tmp);
       const u = (pl.drib % 1), b = Math.abs(Math.cos(Math.PI * u));
       ball.p.set(tmp.x, 0.13 + (tmp.y - 0.17) * b, tmp.z);
-      if (u > 0.47 && u < 0.53 && !pl.bounced) { pl.bounced = true; if (pl.team === 0) tone(95, .04, "sine", .05); } else if (u < 0.4) pl.bounced = false;
+      if (u > 0.47 && u < 0.53 && !pl.bounced) { pl.bounced = true; if (pl.team === ME) tone(95, .04, "sine", .05); } else if (u < 0.4) pl.bounced = false;
       return;
     }
     const prevY = ball.p.y; ball.p.addScaledVector(ball.v, dt); ball.p.y -= 0.5 * GRAV * dt * dt; ball.v.y -= GRAV * dt; ball.spin += dt * 8;
@@ -225,7 +244,7 @@ export function start(root, opts) {
         ball.holder = pl; pl.hasBall = true; pl.hand = 1; pl.shooting = false; players[1 - pl.team].hasBall = false; ball.shot = null;
         if (pl.team === 1) { ai.shootAt = 0; ai.thinkAt = 0; ai.holdUntil = 0; }
         possClock = 12;
-        if (pl.team !== offense) turnover(pl.team, pl.team === 0 ? "REBOUND · YOUR BALL" : "THEIR REBOUND");
+        if (pl.team !== offense) turnover(pl.team, "REB");
         break;
       }
     }
@@ -264,24 +283,28 @@ export function start(root, opts) {
     if (!over) {
       if (pause > 0) pause -= dt;
       const kx = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0), kz = (keys.KeyS || keys.ArrowDown ? 1 : 0) - (keys.KeyW || keys.ArrowUp ? 1 : 0);
-      if (pause <= 0) {
+      if (GUEST) guestStep(dt, input.x || kx, input.z || kz);
+      else if (pause <= 0) {
         if (input.move) { doMove(players[0], input.move); input.move = null; }
         stepPlayer(players[0], dt, input.x || kx, input.z || kz, input.shoot, input.wasShoot);
-        const [ax, az, as] = aiStep(dt, players[1], players[0]); stepPlayer(players[1], dt, ax, az, as, aiPrev.shoot); aiPrev.shoot = as;
+        if (NET) { stepPlayer(players[1], dt, remote.x, remote.z, remote.s, remote.was, true); remote.was = remote.s; }
+        else { const [ax, az, as] = aiStep(dt, players[1], players[0]); stepPlayer(players[1], dt, ax, az, as, aiPrev.shoot); aiPrev.shoot = as; }
         const a = players[0], b = players[1], d = flat(a.pos).sub(flat(b.pos)), l = d.length();
         if (l < 0.75 && l > 0) { d.divideScalar(l).multiplyScalar((0.75 - l) / 2); a.pos.add(d); b.pos.sub(d); }
       } else input.move = null;
       input.wasShoot = input.shoot;
       for (const p of players) { animatePlayer(p, t, dt, players[1 - p.team]); rig?.updateRig(p, t, dt, players[1 - p.team]); }
-      stepBall(dt);
-      if (pause <= 0 && ball.holder) {
+      if (!GUEST || ball.holder) stepBall(dt); else guestBall();
+      if (NET && !GUEST) sendState(dt);
+      if (GUEST && ball.holder) root.querySelector("#hposs").textContent = `${offense === ME ? "Your ball" : "Defense"} · ${Math.max(0, Math.ceil(possClock))}`;
+      if (!GUEST && pause <= 0 && ball.holder) {
         possClock -= dt;
-        root.querySelector("#hposs").textContent = `${offense === 0 ? "Your ball" : "Defense"} · ${Math.max(0, Math.ceil(possClock))}`;
+        root.querySelector("#hposs").textContent = `${offense === ME ? "Your ball" : "Defense"} · ${Math.max(0, Math.ceil(possClock))}`;
         if (possClock <= 0) { turnover(1 - offense, "SHOT CLOCK!"); tone(180, .4, "sawtooth", .15); }
       }
     }
     ballMesh.position.copy(ball.p); ballMesh.rotation.set(ball.spin, ball.spin * .7, 0);
-    const me = players[0]; ring.position.set(me.pos.x, 0.02, me.pos.z); ring.material.opacity = 0.65 + Math.sin(t * 6) * 0.25; ring.scale.setScalar(me.hasBall ? 1.1 : 1);
+    const me = players[ME]; ring.position.set(me.pos.x, 0.02, me.pos.z); ring.material.opacity = 0.65 + Math.sin(t * 6) * 0.25; ring.scale.setScalar(me.hasBall ? 1.1 : 1);
     // shot arc preview
     arcDots.visible = me.hasBall && me.shooting && !me.dunking;
     if (arcDots.visible) {
@@ -310,23 +333,88 @@ export function start(root, opts) {
   const netMesh = scene.getObjectByName("net");
   let lastW = 0, lastH = 0;
   function resize() { const w = wrap.clientWidth, h = wrap.clientHeight; if (w !== lastW || h !== lastH) { lastW = w; lastH = h; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); } }
-  function finish(team) {
-    over = true; const won = team === 0;
+  function finish(team, left) {
+    if (over) return;
+    over = true; const won = team === ME; NET?.send({ end: team });
     if (won) { confetti(); SFX.win(); } else SFX.lose();
     const end = document.createElement("div"); end.className = "hp-end";
-    end.innerHTML = `<p class="big">${won ? "You win!" : "AI wins"}</p><p class="status">${score[0]} – ${score[1]}</p><div class="btns"><button id="hagain">Run it back</button><button class="ghost" id="hhome">Home</button></div>`;
+    end.innerHTML = `<p class="big">${left ? "Opponent left" : won ? "You win!" : esc(names[team]) + " wins"}</p><p class="status">${score[0]} – ${score[1]}</p><div class="btns">${ONLINE ? "" : `<button id="hagain">Run it back</button>`}<button class="ghost" id="hhome">Home</button></div>`;
     wrap.appendChild(end);
-    end.querySelector("#hagain").onclick = () => { cleanup(); start(root, opts); };
+    if (!ONLINE) end.querySelector("#hagain").onclick = () => { cleanup(); start(root, opts); };
     end.querySelector("#hhome").onclick = () => { cleanup(); opts.onExit(); };
   }
   function cleanup() {
-    cancelAnimationFrame(raf); removeEventListener("keydown", onKey); removeEventListener("keyup", onKey);
+    over = true; NET?.close(); cancelAnimationFrame(raf); removeEventListener("keydown", onKey); removeEventListener("keyup", onKey);
     renderer.dispose(); scene.traverse(o => { o.geometry?.dispose?.(); if (o.material) [].concat(o.material).forEach(m => { m.map?.dispose?.(); m.dispose?.(); }); });
   }
   root.querySelector("#hquit").onclick = () => { cleanup(); opts.onExit(); };
-  if (opts.debug) window.__h3 = { players, ball, get score() { return score; }, input, doMove: k => doMove(players[0], k) };
+  // ---------- online ----------
+  const remote = { x: 0, z: 0, s: false, was: false, relMeter: null, seq: 0, relSeq: 0 };
+  let sendAcc = 0, snap = null, snapAt = 0, gSeq = 0, gWas = false, gMeter = 0, gShootT = 0, gSendAcc = 0;
+  const bits = p => (p.hasBall ? 1 : 0) | (p.shooting ? 2 : 0) | (p.dunking ? 4 : 0);
+  const age = v => v ? +(t - v).toFixed(2) : -1;
+  function sendState(dt) {
+    sendAcc += dt; if (sendAcc < 0.045) return; sendAcc = 0;
+    NET.send({ st: 1, P: players.map(p => [+p.pos.x.toFixed(3), +p.pos.z.toFixed(3), +p.y.toFixed(3), +p.vel.x.toFixed(2), +p.vel.z.toFixed(2), +p.facing.toFixed(3), bits(p), p.hand,
+      p.move ? p.move.kind : 0, p.move ? +((t - p.move.t0) / p.move.dur).toFixed(3) : 0, p.move?.from ?? 0, p.stumble > t ? +(p.stumble - t).toFixed(2) : 0, age(p.released), age(p.blockT), age(p.slam), +(p.meter || 0).toFixed(3), p.spinDir || 1]),
+      B: [+ball.p.x.toFixed(3), +ball.p.y.toFixed(3), +ball.p.z.toFixed(3), +ball.v.x.toFixed(2), +ball.v.y.toFixed(2), +ball.v.z.toFixed(2), ball.holder ? ball.holder.team : -1],
+      o: offense, c: +possClock.toFixed(1) }, true);
+  }
+  function guestStep(dt, kx, kz) {
+    // send our stick as a court direction, plus the shoot button
+    const w = camToWorld(kx, kz), mine = players[ME];
+    gSendAcc += dt;
+    if (gSendAcc > 0.03 || input.shoot !== gWas) { gSendAcc = 0; NET.send({ in: [+w.x.toFixed(3), +w.z.toFixed(3), input.shoot ? 1 : 0, ++gSeq] }, true); }
+    if (input.move) { NET.send({ mv: input.move }); input.move = null; }
+    // our own shot meter runs here so lag can't spoil the timing
+    if (input.shoot && !gWas && mine.hasBall && mine.y <= 0.01) gShootT = t;
+    gMeter = gShootT ? Math.max(0.001, (t - gShootT) / METER_TIME) : 0;
+    if (!input.shoot && gWas && gShootT) { NET.send({ rel: +gMeter.toFixed(3), q: gSeq }); gShootT = 0; }
+    if (!mine.hasBall && !mine.shooting && t - gShootT > 0.3) gShootT = 0;
+    if (!gShootT) gMeter = 0;
+    gWas = input.shoot;
+    if (!snap) return;
+    const k = 1 - Math.exp(-dt * 18);
+    snap.P.forEach((a, i) => {
+      const p = players[i];
+      p.pos.x += (a[0] - p.pos.x) * k; p.pos.z += (a[1] - p.pos.z) * k; p.y += (a[2] - p.y) * k; p.vel.set(a[3], 0, a[4]);
+      p.facing += Math.atan2(Math.sin(a[5] - p.facing), Math.cos(a[5] - p.facing)) * k;
+      p.hasBall = !!(a[6] & 1); p.shooting = !!(a[6] & 2); p.dunking = !!(a[6] & 4); p.hand = a[7]; p.spinDir = a[16];
+      p.move = a[8] ? { kind: a[8], dur: MOVES[a[8]].dur, t0: t - a[9] * MOVES[a[8]].dur, from: a[10] } : null;
+      p.stumble = a[11] ? t + a[11] : 0; p.released = a[12] >= 0 ? t - a[12] : 0; p.blockT = a[13] >= 0 ? t - a[13] : 0; p.slam = a[14] >= 0 ? t - a[14] : 0;
+      p.meter = i === ME && gMeter ? gMeter : a[15];
+    });
+    const h = snap.B[6]; ball.holder = h >= 0 ? players[h] : null;
+    if (snap.o !== offense) { offense = snap.o; posUI(offense); }
+    possClock = snap.c;
+  }
+  function guestBall() {
+    if (!snap) return;
+    const B = snap.B, a = Math.min(0.15, (performance.now() - snapAt) / 1000);
+    ball.p.set(B[0] + B[3] * a, Math.max(BALL_R, B[1] + B[4] * a - 0.5 * GRAV * a * a), B[2] + B[5] * a); ball.spin += 0.15;
+  }
+  if (NET) {
+    NET.on(d => {
+      if (d.st) { snap = d; snapAt = performance.now(); return; }
+      if (d.in) {
+        if (d.in[3] > remote.relSeq) { const p1 = players[1]; remote.x = d.in[0]; remote.z = d.in[1];
+          // mid-shot, only the guest's release message (with their meter) lets go of the ball
+          if (d.in[2] || !(p1.shooting && p1.hasBall && !p1.dunking)) remote.s = !!d.in[2]; }
+        return;
+      }
+      if (d.rel != null) { remote.relMeter = d.rel; remote.s = false; remote.relSeq = d.q; return; }
+      if (d.mv && !GUEST && pause <= 0) { doMove(players[1], d.mv); return; }
+      if (d.sc) { score = [d.sc[3], d.sc[4]]; showScore(d.sc[0], d.sc[1], d.sc[2]); return; }
+      if (d.to) { msg(toText(d.to[0], d.to[1]), 900); return; }
+      if (d.end != null) { finish(d.end); return; }
+      apply(d);
+    });
+    NET.onClose(() => { if (!over) finish(ME, true); });
+  }
+
+  if (opts.debug) window.__h3 = { players, ball, get score() { return score; }, input, doMove: k => doMove(players[0], k), givePoss: tm => setupPossession(tm), get g() { return [gMeter, gWas, gSeq]; } };
   camera.position.set(0, 4, 14);
-  msg("Your ball · get buckets", 1600);
+  msg(GUEST ? "Their ball · lock in on D" : ONLINE ? "Your ball · get buckets" : "Your ball · get buckets", 1600);
   raf = requestAnimationFrame(frame);
   return cleanup;
 }

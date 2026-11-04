@@ -26,6 +26,7 @@ async function schema(db) {
   if (schemaReady) return;
   await db.batch([
     db.prepare("CREATE TABLE IF NOT EXISTS queue (pid TEXT PRIMARY KEY, name TEXT, t INTEGER)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS hoopnet (code TEXT PRIMARY KEY, host TEXT, hname TEXT, open INTEGER, offer TEXT, guest TEXT, gname TEXT, answer TEXT, t INTEGER)"),
     db.prepare("CREATE TABLE IF NOT EXISTS assign (pid TEXT PRIMARY KEY, match_id TEXT, t INTEGER)"),
     db.prepare("CREATE TABLE IF NOT EXISTS matches (id TEXT PRIMARY KEY, data TEXT, v INTEGER, t INTEGER)"),
     db.prepare("CREATE TABLE IF NOT EXISTS seen (pid TEXT PRIMARY KEY, t INTEGER)"),
@@ -588,6 +589,40 @@ export async function onRequest({ request, env, params }) {
     }
     await db.prepare("INSERT OR REPLACE INTO mq (pid,name,mode,t) VALUES (?,?,?,?)").bind(pid, name, mode, now).run();
     return json({ waiting: true });
+  }
+
+  // Street Hoops online: the server only pairs players and passes the WebRTC handshake along.
+  // The game itself runs peer to peer.
+  if (path.startsWith("hoops/")) {
+    const sdp = v => String(v ?? "").slice(0, 12000), op = path.slice(6);
+    await db.prepare("DELETE FROM hoopnet WHERE t<?").bind(now - 120000).run();
+    if (op === "host") {
+      if (!body.sdp) return json({ error: "Missing offer." }, 400);
+      const code = roomCode();
+      await db.prepare("DELETE FROM hoopnet WHERE host=?").bind(pid).run();
+      await db.prepare("INSERT INTO hoopnet (code,host,hname,open,offer,t) VALUES (?,?,?,?,?,?)").bind(code, pid, await nameFor(db, pid, body.name), body.open ? 1 : 0, sdp(body.sdp), now).run();
+      return json({ code });
+    }
+    if (op === "quick" || op === "join") {
+      const name = await nameFor(db, pid, body.name);
+      const row = op === "quick"
+        ? await db.prepare("UPDATE hoopnet SET guest=?, gname=?, t=? WHERE code=(SELECT code FROM hoopnet WHERE open=1 AND guest IS NULL AND host<>? AND t>? ORDER BY t LIMIT 1) AND guest IS NULL RETURNING code,offer,hname").bind(pid, name, now, pid, now - 8000).first()
+        : await db.prepare("UPDATE hoopnet SET guest=?, gname=?, t=? WHERE code=? AND guest IS NULL AND host<>? RETURNING code,offer,hname").bind(pid, name, now, clean(body.code, 8).toUpperCase(), pid).first();
+      if (!row) return json(op === "quick" ? { none: true } : { error: "No open game with that code." }, op === "quick" ? 200 : 404);
+      return json({ code: row.code, offer: row.offer, hname: row.hname });
+    }
+    const code = clean(body.code, 8).toUpperCase();
+    if (op === "answer") {
+      const r = await db.prepare("UPDATE hoopnet SET answer=?, t=? WHERE code=? AND guest=?").bind(sdp(body.sdp), now, code, pid).run();
+      return json(r.meta.changes ? { ok: true } : { error: "Game closed." }, r.meta.changes ? 200 : 404);
+    }
+    if (op === "poll") { // host waits here for someone to answer; polling keeps the room alive
+      const r = await db.prepare("UPDATE hoopnet SET t=? WHERE code=? AND host=? RETURNING answer,gname").bind(now, code, pid).first();
+      if (!r) return json({ error: "Game closed." }, 404);
+      return json(r.answer ? { answer: r.answer, gname: r.gname } : { waiting: true });
+    }
+    if (op === "cancel") { await db.prepare("DELETE FROM hoopnet WHERE code=? AND (host=? OR guest=?)").bind(code, pid, pid).run(); return json({ ok: true }); }
+    return json({ error: "Unknown." }, 404);
   }
 
   if (path === "leave") {

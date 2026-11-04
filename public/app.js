@@ -71,7 +71,8 @@ function home(msg) {
       ${[["deep", ICON.deep, "Deep Ball", "Name the deepest cut"], ["guess", ICON.guess, "Guess the Player", "Clues drop. Name him first."], ["draft", ICON.draft, "Spin & Draft", "Spin a team. Draft a legend."], ["hoops", ICON.hoops, "Street Hoops", "3D streetball 1v1. First to 15."]]
         .map(([k, ic, n, sub]) => `<button class="segcard" data-mode="${k}" aria-pressed="${mode === k}"><span class="ic">${ic}</span><b>${n}</b><span class="sub">${sub}</span></button>`).join("")}
     </div>
-    ${mode === "hoops" ? `<div class="btns"><button id="hai">Play vs AI · 3D</button><button id="h2p" class="ghost">2 players · classic</button></div>` : `
+    ${mode === "hoops" ? `<div class="btns"><button id="hon">Play online · 1v1</button><button id="hfr" class="ghost">Play a friend</button></div>
+    <div class="btns"><button id="hai" class="ghost">Play vs AI · 3D</button><button id="h2p" class="ghost">2 players · classic</button></div>` : `
     <div class="btns"><button id="find">Find match</button><button id="friend" class="ghost">Play a friend</button></div>
     <div class="btns"><button id="bot" class="ghost">Practice vs AI</button></div>`}
     ${msg ? `<p class="err">${esc(msg)}</p>` : ""}
@@ -82,6 +83,7 @@ function home(msg) {
   document.querySelectorAll("[data-mode]").forEach(b => b.onclick = () => { mode = b.dataset.mode; store.set("db_mode", mode); home(); });
   if (mode === "hoops") {
     $("#hai").onclick = () => hoops(true); $("#h2p").onclick = () => hoops(false);
+    $("#hon").onclick = () => hoopsOnline("quick"); $("#hfr").onclick = () => hoopsFriend();
   } else $("#find").onclick = find;
   const tickOnline = async () => {
     if (view !== "home") return;
@@ -106,6 +108,43 @@ async function hoops(vsAI) {
     if (view === "hoops") hoopsStop = mod.start(root, opts);
   } catch (e) { // older devices without WebGL modules: fall back to the 2D game
     hoopsStop = window.Hoops.start(root, opts);
+  }
+}
+
+// Street Hoops online: pair up, connect peer to peer, then play the 3D game
+function hoopsFriend() {
+  stop(); view = "hoops";
+  app.innerHTML = `<div class="panel"><span class="label">Street Hoops · play a friend</span>
+    <div class="btns"><button id="mk">Make a code</button></div>
+    <p class="small">Or join theirs:</p>
+    <form id="jf" class="btns" autocomplete="off"><input type="text" id="jc" maxlength="5" placeholder="CODE" style="text-transform:uppercase"><button class="ghost">Join</button></form>
+    <div class="btns"><button class="ghost" id="bk">Back</button></div></div>`;
+  $("#mk").onclick = () => hoopsOnline("host");
+  $("#jf").onsubmit = e => { e.preventDefault(); const c = $("#jc").value.trim().toUpperCase(); if (c) hoopsOnline("join", c); };
+  $("#bk").onclick = () => home();
+}
+async function hoopsOnline(mode, code) {
+  stop(); view = "hoops";
+  const ac = new AbortController(), token = pollToken;
+  app.innerHTML = `<div class="panel hoops-panel"><span class="label">Street Hoops · online 1v1</span>
+    <p class="status pulse" id="ns">Getting ready…</p><p class="code" id="nc" hidden></p>
+    <div class="btns"><button class="ghost" id="nx">Cancel</button></div></div>`;
+  $("#nx").onclick = () => { ac.abort(); home(); };
+  hoopsStop = () => ac.abort();
+  try {
+    const [net, mod] = await Promise.all([import("./hoopnet.js"), import("./hoops3d.js")]);
+    const link = await net.connect({ api, mode, code, signal: ac.signal, onStatus: (txt, c) => {
+      if (view !== "hoops" || !$("#ns")) return;
+      $("#ns").textContent = txt;
+      if (c) { const el = $("#nc"); el.hidden = false; el.textContent = c; if (mode === "host") $("#ns").textContent = "Send this code to your friend. Waiting for them…"; }
+    } });
+    if (ac.signal.aborted || view !== "hoops" || token !== pollToken) { link.net.close(); return; }
+    const root = app.querySelector(".hoops-panel");
+    const names = link.role === "host" ? [me.name, link.opp] : [link.opp, me.name];
+    hoopsStop = mod.start(root, { online: link, names, debug: /debug3d/.test(location.search), onExit: () => { hoopsStop = null; home(); } });
+  } catch (e) {
+    if (ac.signal.aborted || view !== "hoops") return;
+    const ns = $("#ns"); if (ns) { ns.classList.remove("pulse"); ns.textContent = e.message; }
   }
 }
 
