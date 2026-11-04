@@ -6,7 +6,7 @@ import { GLTFLoader } from "./vendor/GLTFLoader.js";
 import { clone as cloneSkinned } from "./vendor/SkeletonUtils.js";
 
 // Add new clips here: drop public/models/anim_<name>.glb and list the name.
-const CLIPS = ["dribble"];
+const CLIPS = ["dribble", "idle", "walk", "run", "defense"];
 const HEIGHT = 1.9;
 
 export async function loadRig() {
@@ -14,10 +14,14 @@ export async function loadRig() {
   const [model, ...anims] = await Promise.all([loader.loadAsync(base + "player.glb"),
     ...CLIPS.map(n => loader.loadAsync(base + `anim_${n}.glb`).catch(() => null))]);
   const clips = {};
-  anims.forEach((g, i) => { const c = g?.animations?.[0]; if (c) clips[CLIPS[i]] = inPlace(c); });
+  anims.forEach((g, i) => { const c = g?.animations?.[0]; if (c) { const ip = inPlace(c); clips[CLIPS[i] + "U"] = part(ip, true); clips[CLIPS[i] + "L"] = part(ip, false); } });
   return { scene: model.scene, clips };
 }
 
+// upper body (spine up, arms, head) vs lower body (hips, legs) so we can
+// dribble with the arms while the legs walk or run
+const LOWER = /(Hips|UpLeg|Leg|Foot|ToeBase|Toe_End)\./;
+function part(clip, upper) { return new THREE.AnimationClip(clip.name + (upper ? "U" : "L"), clip.duration, clip.tracks.filter(tr => LOWER.test(tr.name) !== upper)); }
 // strip forward/sideways root motion so the game controls where the player is
 function inPlace(clip) {
   for (const tr of clip.tracks) if (/Hips\.position$/.test(tr.name)) {
@@ -42,7 +46,8 @@ export function attachRig(p, rig, colors) {
   const mixer = new THREE.AnimationMixer(root), actions = {};
   for (const [k, c] of Object.entries(rig.clips)) { actions[k] = mixer.clipAction(c); actions[k].play(); actions[k].setEffectiveWeight(0); }
   p.hip.visible = false; p.group.add(root);
-  p.mx = { root, mixer, actions, b, s, baseY, cur: null, mirror: false };
+  p.mx = { root, mixer, actions, b, s, baseY, w: {}, mirror: false };
+  if (actions.idleU) { actions.idleU.setEffectiveWeight(1); actions.idleL.setEffectiveWeight(1); p.mx.w.idleU = p.mx.w.idleL = 1; }
   return true;
 }
 
@@ -60,9 +65,24 @@ export function updateRig(p, t, dt, other) {
   const m = p.mx; if (!m) return;
   const speed = Math.min(1, Math.hypot(p.vel.x, p.vel.z) / 5.2), ease = k => 1 - Math.exp(-k * dt);
   const mv = p.move, mk = mv ? Math.min(1, (t - mv.t0) / mv.dur) : 0, arc = Math.sin(Math.PI * mk);
-  const want = m.actions.dribble ? "dribble" : null;
-  if (want !== m.cur) { for (const [k, a] of Object.entries(m.actions)) a.setEffectiveWeight(k === want ? 1 : 0); m.cur = want; }
-  if (m.actions.dribble) m.actions.dribble.timeScale = p.hasBall ? (mv ? 1.8 : 1 + speed * 0.5) : 0.25;
+  // pick clips for the arms (U) and the legs (L), then fade weights so each half always adds up to 1
+  const def = !p.hasBall && other.hasBall, A = m.actions, W = {};
+  const walkW = Math.min(1, speed / 0.35) * (1 - Math.max(0, (speed - 0.45) / 0.35)), runW = Math.max(0, Math.min(1, (speed - 0.45) / 0.35));
+  const moving = Math.min(1, walkW + runW), base = p.hasBall ? "dribble" : def ? "defense" : "idle";
+  W[base + "L"] = 1 - moving; W.walkL = walkW; W.runL = runW;
+  if (p.hasBall || def) W[base + "U"] = 1; else { W.idleU = 1 - moving; W.walkU = walkW; W.runU = runW; }
+  for (const k in A) { const tw = W[k] || 0; m.w[k] = lerp(m.w[k] ?? 0, tw, ease(9)); }
+  // keep each half summing to 1 so the body never falls back to a T-pose
+  for (const half of ["U", "L"]) {
+    let sum = 0; for (const k in A) if (k.endsWith(half)) sum += m.w[k];
+    for (const k in A) if (k.endsWith(half)) A[k].setEffectiveWeight(sum > 0 ? m.w[k] / sum : 0);
+  }
+  const stride = 0.75 + speed * 0.5;
+  for (const h of ["U", "L"]) {
+    if (A["dribble" + h]) A["dribble" + h].timeScale = mv ? 1.8 : 1 + speed * 0.4;
+    if (A["walk" + h]) A["walk" + h].timeScale = stride * 1.1;
+    if (A["run" + h]) A["run" + h].timeScale = stride;
+  }
   // dribble clip uses the right hand; mirror for left-hand dribbles.
   // During a cross the swap happens when the ball is at the floor, mid-move.
   const hand = mv && (mv.kind === "cross" || mv.kind === "behind") && mk < 0.5 ? mv.from : p.hand;
@@ -70,8 +90,7 @@ export function updateRig(p, t, dt, other) {
   if (mirror !== m.mirror) { m.mirror = mirror; m.root.scale.x = mirror ? -m.s : m.s; }
   m.mixer.update(dt);
   // body: dip and lean into moves, sit down on defense, lean back on step backs
-  const def = !p.hasBall && other.hasBall;
-  let dip = def ? 0.06 : 0, leanF = def ? 0.3 : p.hasBall ? 0.1 + speed * 0.15 : speed * 0.15, leanS = 0, twist = 0;
+  let dip = def ? 0.07 : 0, leanF = def ? 0.22 : p.hasBall ? 0.1 + speed * 0.15 : speed * 0.15, leanS = 0, twist = 0;
   if (mv?.kind === "cross" || mv?.kind === "behind") { const sgn = p.hand ? -1 : 1; dip = 0.1 * arc; leanF += 0.25 * arc; leanS = sgn * 0.35 * arc; twist = sgn * 0.4 * arc; }
   else if (mv?.kind === "spin") { dip = 0.09; leanF += 0.3; }
   else if (mv?.kind === "stepback") { leanF = -0.35 * arc; dip = -0.08 * arc; }

@@ -124,17 +124,29 @@ export function start(root, opts) {
   const fwdOf = p => new THREE.Vector3(Math.sin(p.facing), 0, Math.cos(p.facing));
   const greenWidth = pl => { const d = distToRim(pl.pos), o = players[1 - pl.team], gap = flat(o.pos).distanceTo(flat(pl.pos));
     const contest = gap < 1.6 && !o.stumble ? (1 - gap / 1.6) : 0; return Math.max(0.035, 0.13 - d * 0.006 - contest * 0.06 + (pl.space > t ? 0.04 : 0)); };
+  // how well the defender is guarding this shot: 0 open → 1 smothered
+  function contestOf(pl) {
+    const def = players[1 - pl.team]; if (def.stumble > t) return 0;
+    const gap = flat(def.pos).distanceTo(flat(pl.pos)); if (gap > 1.8) return 0;
+    const toRim = flat(RIM).sub(flat(pl.pos)).normalize(), toDef = flat(def.pos).sub(flat(pl.pos)).normalize();
+    const front = toRim.dot(toDef) > 0.25 ? 1 : 0.45; // between shooter and hoop
+    const hands = def.y > 0.2 || (def.blockT && t - def.blockT < 0.6) ? 1 : 0.55; // jumping or hand up
+    return Math.min(1, (1 - gap / 1.8) * 1.35) * front * hands;
+  }
   function release(pl) {
     const from = handsMid(pl), d = distToRim(pl.pos), def = players[1 - pl.team], gap = flat(def.pos).distanceTo(flat(pl.pos));
-    const contest = def.stumble ? 0 : gap < 1.6 ? (def.y > 0.25 ? 1 : 0.5) * (1 - gap / 1.6) : 0;
+    const contest = contestOf(pl);
     const m = pl.meter, w = greenWidth(pl), off = Math.abs(m - GREEN_C), green = off <= w / 2;
     const quality = green ? 1 : Math.max(0, 1 - (off - w / 2) * 3);
-    const err = green ? 0.012 + contest * 0.05 : (1 - quality) * 0.26 + d * 0.006 + contest * 0.18 + Math.abs(Math.random() + Math.random() - 1) * 0.05;
-    if (pl.team === ME || NET) say(pl.team, { fb: green ? ["GREEN!", "g"] : [m < GREEN_C ? (off > .2 ? "VERY EARLY" : "SLIGHTLY EARLY") : (off > .12 ? "VERY LATE" : "SLIGHTLY LATE"), "r"] });
+    // in your face with a hand up beats even a green; a medium contest makes it a coin flip
+    const smother = contest > 0.62, risky = green && !smother && Math.random() < contest * 0.9;
+    const err = green ? (smother ? 0.3 + contest * 0.25 : risky ? 0.17 + contest * 0.1 : 0.012) : (1 - quality) * 0.26 + d * 0.006 + contest * 0.18 + Math.abs(Math.random() + Math.random() - 1) * 0.05;
+    if (pl.team === ME || NET) say(pl.team, { fb: green && smother ? ["GREEN · SMOTHERED", "r"] : green && risky ? ["GREEN · CONTESTED", "r"] : green ? ["GREEN!", "g"] : [m < GREEN_C ? (off > .2 ? "VERY EARLY" : "SLIGHTLY EARLY") : (off > .12 ? "VERY LATE" : "SLIGHTLY LATE"), "r"] });
     const a = Math.random() * Math.PI * 2, target = RIM.clone().add(new THREE.Vector3(Math.cos(a) * err, 0.02, Math.sin(a) * err + 0.02));
     const T = 0.75 + d * 0.06, v = target.clone().sub(from).add(new THREE.Vector3(0, 0.5 * GRAV * T * T, 0)).divideScalar(T);
     ball.p.copy(from); ball.v.copy(v); ball.holder = null; pl.hasBall = false; ball.cool = 0.35; pl.released = t;
-    ball.shot = { team: pl.team, value: d > ARC ? 2 : 1 };
+    ball.shot = { team: pl.team, value: d > ARC ? 2 : 1, t0: t };
+    if (contest > 0.62) say(def.team, { m: ["SMOTHERED", 900], bz: 20 });
     pl.shooting = false; pl.meter = 0; tone(330, .06, "triangle", .08);
   }
   function dunk(pl) {
@@ -226,6 +238,19 @@ export function start(root, opts) {
       ball.p.set(tmp.x, 0.13 + (tmp.y - 0.17) * b, tmp.z);
       if (u > 0.47 && u < 0.53 && !pl.bounced) { pl.bounced = true; if (pl.team === ME) tone(95, .04, "sine", .05); } else if (u < 0.4) pl.bounced = false;
       return;
+    }
+    // swat: a defender's hand gets to the ball early in the shot
+    if (ball.shot && !ball.shot.dunk && t - ball.shot.t0 < 0.45 && pause <= 0) {
+      const d = players[1 - ball.shot.team];
+      if (d.y > 0.15) for (const h of [d.handL, d.handR]) {
+        h.getWorldPosition(tmp);
+        if (tmp.distanceTo(ball.p) < 0.38) {
+          const away = flat(ball.p).sub(flat(d.pos)).normalize();
+          ball.v.set(away.x * 3.5 + (Math.random() - .5), -2.5, away.z * 3.5 + (Math.random() - .5)); ball.shot = null; ball.cool = 0.25; d.blockT = t;
+          say(d.team, { m: ["BLOCKED!", 1100], bz: [30, 20, 40] }); say(1 - d.team, { m: ["SENT BACK", 900] }); tone(160, .1, "square", .1);
+          break;
+        }
+      }
     }
     const prevY = ball.p.y; ball.p.addScaledVector(ball.v, dt); ball.p.y -= 0.5 * GRAV * dt * dt; ball.v.y -= GRAV * dt; ball.spin += dt * 8;
     if (ball.p.z - BALL_R < BOARD_Z && ball.p.z > BOARD_Z - 0.3 && Math.abs(ball.p.x) < 0.9 && ball.p.y > 2.9 && ball.p.y < 4.0) { ball.p.z = BOARD_Z + BALL_R; ball.v.z = Math.abs(ball.v.z) * 0.6; tone(220, .04, "square", .05); }
