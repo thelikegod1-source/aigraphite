@@ -44,9 +44,14 @@ export function start(root, opts) {
   buildCourt(scene); buildCity(scene); buildHoop(scene);
 
   // ---------- players + ball ----------
-  const players = [makePlayer(0, { jersey: 0x2f62d8, trim: 0xffffff, shorts: 0x1d3f99, skin: 0xb9805a, hair: 0x1a120c, num: "1" }),
-                   makePlayer(1, { jersey: 0xd23b3b, trim: 0x111111, shorts: 0x8f1f1f, skin: 0x7a4b2e, hair: 0x0d0a08, num: "23" })];
+  const kits = [{ jersey: 0x2f62d8, trim: 0xffffff, shorts: 0x1d3f99, skin: 0xb9805a, hair: 0x1a120c, num: "1" },
+                { jersey: 0xd23b3b, trim: 0x111111, shorts: 0x8f1f1f, skin: 0x7a4b2e, hair: 0x0d0a08, num: "23" }];
+  const players = kits.map((k, i) => makePlayer(i, k));
   players.forEach(p => scene.add(p.group));
+  // Mixamo character; the built-in body stays if it can't load
+  let rig = null;
+  import("./rig3d.js").then(async R => { const r = await R.loadRig(); if (players.every((p, i) => R.attachRig(p, r, kits[i]))) rig = R; })
+    .catch(e => console.warn("rig", e));
   const ring = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.72, 48), new THREE.MeshBasicMaterial({ color: 0xffd23a, transparent: true, opacity: 0.9 }));
   ring.rotation.x = -Math.PI / 2; ring.position.y = 0.02; scene.add(ring);
   const ballMesh = new THREE.Mesh(new THREE.SphereGeometry(BALL_R, 24, 16), new THREE.MeshStandardMaterial({ map: ballTexture(), roughness: 0.7 }));
@@ -267,7 +272,7 @@ export function start(root, opts) {
         if (l < 0.75 && l > 0) { d.divideScalar(l).multiplyScalar((0.75 - l) / 2); a.pos.add(d); b.pos.sub(d); }
       } else input.move = null;
       input.wasShoot = input.shoot;
-      for (const p of players) animatePlayer(p, t, dt, players[1 - p.team]);
+      for (const p of players) { animatePlayer(p, t, dt, players[1 - p.team]); rig?.updateRig(p, t, dt, players[1 - p.team]); }
       stepBall(dt);
       if (pause <= 0 && ball.holder) {
         possClock -= dt;
