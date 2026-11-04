@@ -141,7 +141,13 @@ async function hoopsOnline(mode, code) {
     if (ac.signal.aborted || view !== "hoops" || token !== pollToken) { link.net.close(); return; }
     const root = app.querySelector(".hoops-panel");
     const names = link.role === "host" ? [me.name, link.opp] : [link.opp, me.name];
-    hoopsStop = mod.start(root, { online: link, names, debug: /debug3d/.test(location.search), onExit: () => { hoopsStop = null; home(); } });
+    const onResult = async (won, left) => {
+      let r = await api("hoops/result", { code: link.code, won, left });
+      for (let i = 0; i < 3 && r.pending; i++) { await new Promise(res => setTimeout(res, i ? 6000 : 13000)); r = await api("hoops/result", { code: link.code, won, left }); }
+      refreshMe?.().catch?.(() => {});
+      return r;
+    };
+    hoopsStop = mod.start(root, { online: link, names, onResult, debug: /debug3d/.test(location.search), onExit: () => { hoopsStop = null; home(); } });
   } catch (e) {
     if (ac.signal.aborted || view !== "hoops") return;
     const ns = $("#ns"); if (ns) { ns.classList.remove("pulse"); ns.textContent = e.message; }

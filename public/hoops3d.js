@@ -151,7 +151,7 @@ export function start(root, opts) {
   }
   function dunk(pl) {
     ball.holder = null; pl.hasBall = false; ball.p.set(RIM.x, RIM.y + 0.35, RIM.z + 0.05); ball.v.set(0, -4, 0); ball.cool = 0.5; pl.slam = t;
-    ball.shot = { team: pl.team, value: 1, dunk: true }; pl.vy = Math.max(pl.vy, 2.5); pl.shooting = false; pl.dunking = false; buzz(40); tone(140, .12, "sawtooth", .12);
+    ball.shot = { team: pl.team, value: 1, dunk: true }; pl.vy = 0; pl.hang = t + 0.5; cam.shake = 0.35; rimShake = t; pl.shooting = false; pl.dunking = false; buzz(40); tone(140, .12, "sawtooth", .12);
   }
   function scored(team, val, dunked) {
     score[team] += val; NET?.send({ sc: [team, val, dunked ? 1 : 0, score[0], score[1]] }); showScore(team, val, dunked); pause = 1.3;
@@ -185,7 +185,7 @@ export function start(root, opts) {
   function stepPlayer(pl, dt, moveX, moveZ, shootDown, shootWas, world) {
     const ground = pl.y <= 0.001, o = players[1 - pl.team];
     const want = world ? new THREE.Vector3(moveX, 0, moveZ) : camToWorld(moveX, moveZ); if (want.lengthSq() > 1) want.normalize();
-    let sp = (pl.hasBall ? SPEED * 0.9 : SPEED) * (ground ? 1 : 0.3);
+    let sp = (pl.hasBall ? SPEED * 0.9 : SPEED) * (ground ? 1 : 0.3) * (pl.burst > t ? 1.3 : 1);
     if (pl.stumble > t) sp *= 0.08;
     if (pl.shooting && ground) sp *= 0.2;
     if (pl.move) { const k = (t - pl.move.t0) / pl.move.dur; if (k >= 1) pl.move = null; else { pl.vel.copy(pl.move.dir).multiplyScalar(MOVES[pl.move.kind].burst * (1 - k * 0.5)); } }
@@ -196,15 +196,19 @@ export function start(root, opts) {
     if (press && ground && !(pl.stumble > t)) {
       if (pl.hasBall && distToRim(pl.pos) < 1.9) { pl.vy = JUMP_V * 1.15; pl.dunking = true; pl.shooting = true; pl.meter = 0; pl.shotT = t; }
       else if (pl.hasBall) { pl.shooting = true; pl.meter = 0; pl.shotT = t; pl.move = null; pl.jumpAt = t + 0.07; } // gather, then rise
-      else {
-        pl.vy = JUMP_V * 0.9; pl.blockT = t;
-        if (o.hasBall && !o.shooting && flat(o.pos).distanceTo(flat(pl.pos)) < 1.1 && Math.random() < 0.3) {
-          o.hasBall = false; pl.hasBall = true; pl.hand = 1; ball.holder = pl; tone(600, .07, "square", .06); turnover(pl.team, "STOLEN!");
-        }
-      }
+      else if (o.hasBall && !o.shooting && !o.dunking && flat(o.pos).distanceTo(flat(pl.pos)) < 1.3) {
+        // reach: best when you poke at the ball side while it's low in the dribble
+        pl.reachT = t;
+        const side = flat(ball.p).sub(flat(o.pos)), toMe = flat(pl.pos).sub(flat(o.pos)).normalize();
+        const ballSide = side.lengthSq() > 0.001 && side.normalize().dot(toMe) > 0.1, low = ball.p.y < 0.6;
+        const chance = (ballSide ? 0.32 : 0.08) + (low ? 0.14 : 0) - (o.move ? 0.1 : 0);
+        if (Math.random() < chance) { o.hasBall = false; pl.hasBall = true; pl.hand = 1; ball.holder = pl; tone(600, .07, "square", .06); turnover(pl.team, "STOLEN!"); }
+        else { o.burst = t + 0.6; say(o.team, { m: ["BLOW BY", 700] }); } // missed reach: they get a step
+      } else { pl.vy = JUMP_V * 0.9; pl.blockT = t; }
     }
     if (pl.jumpAt && t >= pl.jumpAt) { pl.vy = JUMP_V; pl.jumpAt = 0; }
-    if (!ground || pl.vy > 0) { pl.vy -= GRAV * dt; pl.y = Math.max(0, pl.y + pl.vy * dt); if (pl.y === 0) { pl.vy = 0; if (!pl.hasBall) pl.shooting = false; pl.dunking = false; } }
+    if (pl.hang > t) { pl.y = RIM.y - 2.15; pl.vy = 0; pl.vel.set(0, 0, 0); pl.pos.x += (RIM.x - pl.pos.x) * 0.3; pl.pos.z += (RIM.z + 0.42 - pl.pos.z) * 0.3; }
+    else if (!ground || pl.vy > 0) { pl.vy -= GRAV * dt; pl.y = Math.max(0, pl.y + pl.vy * dt); if (pl.y === 0) { pl.vy = 0; if (!pl.hasBall) pl.shooting = false; pl.dunking = false; } }
     if (pl.dunking && pl.hasBall) {
       pl.pos.addScaledVector(new THREE.Vector3(RIM.x - pl.pos.x, 0, RIM.z + 0.45 - pl.pos.z), Math.min(1, dt * 3));
       if (pl.y > 0.7 && distToRim(pl.pos) < 1.0) dunk(pl);
@@ -274,7 +278,7 @@ export function start(root, opts) {
       }
     }
   }
-  let netSwish = -9;
+  let netSwish = -9, rimShake = -9;
   function aiStep(dt, me, you) {
     let mx = 0, mz = 0, shoot = false;
     const toV = p => { const camFwd = flat(RIM.clone().sub(camera.position)).normalize(), right = new THREE.Vector3(-camFwd.z, 0, camFwd.x), d = flat(p.clone().sub(me.pos)); const l = d.length(); if (l < 0.25) return [0, 0]; d.divideScalar(Math.max(1, l)); return [d.dot(right), -d.dot(camFwd)]; };
@@ -315,8 +319,15 @@ export function start(root, opts) {
         if (NET) { stepPlayer(players[1], dt, remote.x, remote.z, remote.s, remote.was, true); remote.was = remote.s; }
         else { const [ax, az, as] = aiStep(dt, players[1], players[0]); stepPlayer(players[1], dt, ax, az, as, aiPrev.shoot); aiPrev.shoot = as; }
         const a = players[0], b = players[1], d = flat(a.pos).sub(flat(b.pos)), l = d.length();
-        if (l < 0.75 && l > 0) { d.divideScalar(l).multiplyScalar((0.75 - l) / 2); a.pos.add(d); b.pos.sub(d); }
-      } else input.move = null;
+        if (l < 0.75 && l > 0) {
+          // a set defender in front of the ball handler holds their spot; the handler bounces off
+          const off = a.hasBall ? a : b.hasBall ? b : null, def = off === a ? b : a;
+          const walled = off && def.y === 0 && !(def.stumble > t) && flat(RIM).sub(flat(off.pos)).normalize().dot(flat(def.pos).sub(flat(off.pos)).normalize()) > 0.3;
+          const share = walled ? (off === a ? 0.9 : 0.1) : 0.5;
+          d.divideScalar(l).multiplyScalar(0.75 - l); a.pos.addScaledVector(d, share); b.pos.addScaledVector(d, -(1 - share));
+          if (walled && !off.move) off.vel.multiplyScalar(0.6);
+        }
+      } else { input.move = null; if (!GUEST) for (const pl of players) stepPlayer(pl, dt, 0, 0, false, false); } // still fall / hang during the pause
       input.wasShoot = input.shoot;
       for (const p of players) { animatePlayer(p, t, dt, players[1 - p.team]); rig?.updateRig(p, t, dt, players[1 - p.team]); }
       if (!GUEST || ball.holder) stepBall(dt); else guestBall();
@@ -347,15 +358,29 @@ export function start(root, opts) {
       meterFill.classList.toggle("in", Math.abs(me.meter - GREEN_C) <= w / 2);
     }
     // net sways after a make
+    const rs = t - rimShake; if (rimMesh) rimMesh.rotation.x = Math.PI / 2 + (rs < 0.5 ? Math.sin(rs * 40) * 0.08 * (1 - rs / 0.5) : 0);
     const sw = t - netSwish; netMesh.scale.set(1, sw < .6 ? 1 + Math.sin(sw * 20) * .15 * (1 - sw / .6) : 1, 1);
-    // camera behind you, looking at the hoop
-    const behind = flat(me.pos.clone().sub(RIM)).normalize(); if (!isFinite(behind.x) || behind.lengthSq() < .1) behind.set(0, 0, 1);
-    camera.position.lerp(new THREE.Vector3(me.pos.x + behind.x * 6.2, 4.1 + me.y * 0.4, me.pos.z + behind.z * 6.2), 0.08);
-    camera.lookAt(new THREE.Vector3((me.pos.x + RIM.x) / 2, 1.9, (me.pos.z + RIM.z) / 2 - 0.5));
+    updateCamera(dt, me);
     renderer.render(scene, camera);
     raf = requestAnimationFrame(frame);
   }
-  const netMesh = scene.getObjectByName("net");
+  const netMesh = scene.getObjectByName("net"), rimMesh = scene.getObjectByName("rim");
+  // camera: follows the action (you + the ball), turns slowly so it never whips around under the rim,
+  // pulls in when you shoot, shakes on dunks
+  const cam = { yaw: 0, dist: 6.4, look: new THREE.Vector3(0, 1.5, 4), shake: 0 };
+  function updateCamera(dt, me) {
+    const focus = ball.holder ? ball.holder.pos : ball.p, mid = flat(me.pos).lerp(flat(focus), 0.4);
+    const out = flat(mid).sub(flat(RIM));
+    if (out.length() > 1.6) { const want = Math.max(-1.0, Math.min(1.0, Math.atan2(out.x, out.z))); cam.yaw += Math.atan2(Math.sin(want - cam.yaw), Math.cos(want - cam.yaw)) * (1 - Math.exp(-dt * 2.2)); }
+    const sep = flat(me.pos).distanceTo(flat(focus)), shooting = me.shooting && me.hasBall;
+    cam.dist += ((shooting ? 5.2 : 6.0 + Math.min(3, sep) * 0.45) - cam.dist) * (1 - Math.exp(-dt * 3));
+    const dir = new THREE.Vector3(Math.sin(cam.yaw), 0, Math.cos(cam.yaw)), k = 1 - Math.exp(-dt * 5);
+    const want = mid.clone().addScaledVector(dir, cam.dist); want.y = 3.3 + me.y * 0.35;
+    camera.position.lerp(want, k);
+    cam.look.lerp(new THREE.Vector3(mid.x * 0.6 + RIM.x * 0.4, 1.55 + me.y * 0.3, mid.z * 0.6 + RIM.z * 0.4), k);
+    if (cam.shake > 0) { cam.shake -= dt; const a = cam.shake * 0.25; camera.position.x += (Math.random() - .5) * a; camera.position.y += (Math.random() - .5) * a; }
+    camera.lookAt(cam.look);
+  }
   let lastW = 0, lastH = 0;
   function resize() { const w = wrap.clientWidth, h = wrap.clientHeight; if (w !== lastW || h !== lastH) { lastW = w; lastH = h; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); } }
   function finish(team, left) {
@@ -365,6 +390,10 @@ export function start(root, opts) {
     const end = document.createElement("div"); end.className = "hp-end";
     end.innerHTML = `<p class="big">${left ? "Opponent left" : won ? "You win!" : esc(names[team]) + " wins"}</p><p class="status">${score[0]} – ${score[1]}</p><div class="btns">${ONLINE ? "" : `<button id="hagain">Run it back</button>`}<button class="ghost" id="hhome">Home</button></div>`;
     wrap.appendChild(end);
+    if (ONLINE && opts.onResult) {
+      const st = document.createElement("p"); st.className = "small"; st.textContent = "Ranked · saving result…"; end.querySelector(".status").after(st);
+      opts.onResult(won, !!left).then(r => { st.textContent = r?.delta != null ? `Ranked · ${r.delta >= 0 ? "+" : ""}${r.delta} Elo (now ${r.elo})` : r?.unrated ? "Results didn't match · unrated" : "Ranked · result pending"; }).catch(() => { st.textContent = "Couldn't save the result"; });
+    }
     if (!ONLINE) end.querySelector("#hagain").onclick = () => { cleanup(); start(root, opts); };
     end.querySelector("#hhome").onclick = () => { cleanup(); opts.onExit(); };
   }
@@ -381,7 +410,7 @@ export function start(root, opts) {
   function sendState(dt) {
     sendAcc += dt; if (sendAcc < 0.045) return; sendAcc = 0;
     NET.send({ st: 1, P: players.map(p => [+p.pos.x.toFixed(3), +p.pos.z.toFixed(3), +p.y.toFixed(3), +p.vel.x.toFixed(2), +p.vel.z.toFixed(2), +p.facing.toFixed(3), bits(p), p.hand,
-      p.move ? p.move.kind : 0, p.move ? +((t - p.move.t0) / p.move.dur).toFixed(3) : 0, p.move?.from ?? 0, p.stumble > t ? +(p.stumble - t).toFixed(2) : 0, age(p.released), age(p.blockT), age(p.slam), +(p.meter || 0).toFixed(3), p.spinDir || 1]),
+      p.move ? p.move.kind : 0, p.move ? +((t - p.move.t0) / p.move.dur).toFixed(3) : 0, p.move?.from ?? 0, p.stumble > t ? +(p.stumble - t).toFixed(2) : 0, age(p.released), age(p.blockT), age(p.slam), +(p.meter || 0).toFixed(3), p.spinDir || 1, p.hang > t ? 1 : 0, age(p.reachT)]),
       B: [+ball.p.x.toFixed(3), +ball.p.y.toFixed(3), +ball.p.z.toFixed(3), +ball.v.x.toFixed(2), +ball.v.y.toFixed(2), +ball.v.z.toFixed(2), ball.holder ? ball.holder.team : -1],
       o: offense, c: +possClock.toFixed(1) }, true);
   }
@@ -407,7 +436,7 @@ export function start(root, opts) {
       p.hasBall = !!(a[6] & 1); p.shooting = !!(a[6] & 2); p.dunking = !!(a[6] & 4); p.hand = a[7]; p.spinDir = a[16];
       p.move = a[8] ? { kind: a[8], dur: MOVES[a[8]].dur, t0: t - a[9] * MOVES[a[8]].dur, from: a[10] } : null;
       p.stumble = a[11] ? t + a[11] : 0; p.released = a[12] >= 0 ? t - a[12] : 0; p.blockT = a[13] >= 0 ? t - a[13] : 0; p.slam = a[14] >= 0 ? t - a[14] : 0;
-      p.meter = i === ME && gMeter ? gMeter : a[15];
+      p.meter = i === ME && gMeter ? gMeter : a[15]; p.hang = a[17] ? t + 0.05 : 0; p.reachT = a[18] >= 0 ? t - a[18] : 0;
     });
     const h = snap.B[6]; ball.holder = h >= 0 ? players[h] : null;
     if (snap.o !== offense) { offense = snap.o; posUI(offense); }
@@ -624,7 +653,7 @@ function buildHoop(scene) {
   board.position.set(0, 3.45, BOARD_Z - .03); board.castShadow = true; scene.add(board);
   const square = new THREE.Mesh(new THREE.PlaneGeometry(.59, .45), new THREE.MeshBasicMaterial({ color: 0xd23b3b, wireframe: true })); square.position.set(0, 3.3, BOARD_Z + .001); scene.add(square);
   const rim = new THREE.Mesh(new THREE.TorusGeometry(RIM_R, .018, 8, 32), new THREE.MeshStandardMaterial({ color: 0xff5a1f, roughness: .4, metalness: .3 }));
-  rim.rotation.x = Math.PI / 2; rim.position.copy(RIM); rim.castShadow = true; scene.add(rim);
+  rim.name = "rim"; rim.rotation.x = Math.PI / 2; rim.position.copy(RIM); rim.castShadow = true; scene.add(rim);
   const net = new THREE.Mesh(new THREE.CylinderGeometry(RIM_R, RIM_R * .6, .42, 16, 3, true), new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity: .7 }));
   net.position.set(RIM.x, RIM.y - .21, RIM.z); net.name = "net"; scene.add(net);
 }

@@ -66,7 +66,7 @@ async function asHost(api, open, onStatus, signal) {
   onStatus("Connecting…");
   await pc.setRemoteDescription({ type: "answer", sdp: ans.answer });
   try { await openBoth(chans, 15000); } catch (e) { pc.close(); throw e; }
-  api("hoops/cancel", { code }).catch(() => {});
+  api("hoops/start", { code }).catch(() => {});
   return { role: "host", code, opp: ans.gname || "Player", net: link(pc, chans) };
 }
 

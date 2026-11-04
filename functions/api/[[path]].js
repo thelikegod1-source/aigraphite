@@ -26,6 +26,7 @@ async function schema(db) {
   if (schemaReady) return;
   await db.batch([
     db.prepare("CREATE TABLE IF NOT EXISTS queue (pid TEXT PRIMARY KEY, name TEXT, t INTEGER)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS hoopres (code TEXT PRIMARY KEY, host TEXT, hname TEXT, guest TEXT, gname TEXT, hr INTEGER, gr INTEGER, hleft INTEGER, gleft INTEGER, rt INTEGER, t INTEGER, dd INTEGER)"),
     db.prepare("CREATE TABLE IF NOT EXISTS hoopnet (code TEXT PRIMARY KEY, host TEXT, hname TEXT, open INTEGER, offer TEXT, guest TEXT, gname TEXT, answer TEXT, t INTEGER)"),
     db.prepare("CREATE TABLE IF NOT EXISTS assign (pid TEXT PRIMARY KEY, match_id TEXT, t INTEGER)"),
     db.prepare("CREATE TABLE IF NOT EXISTS matches (id TEXT PRIMARY KEY, data TEXT, v INTEGER, t INTEGER)"),
@@ -620,6 +621,35 @@ export async function onRequest({ request, env, params }) {
       const r = await db.prepare("UPDATE hoopnet SET t=? WHERE code=? AND host=? RETURNING answer,gname").bind(now, code, pid).first();
       if (!r) return json({ error: "Game closed." }, 404);
       return json(r.answer ? { answer: r.answer, gname: r.gname } : { waiting: true });
+    }
+    if (op === "start") { // connected: keep who played for the Elo result
+      const r = await db.prepare("DELETE FROM hoopnet WHERE code=? AND host=? AND guest IS NOT NULL RETURNING host,hname,guest,gname").bind(code, pid).first();
+      if (r) await db.prepare("INSERT OR REPLACE INTO hoopres (code,host,hname,guest,gname,t) VALUES (?,?,?,?,?,?)").bind(code, r.host, r.hname, r.guest, r.gname, now).run();
+      return json({ ok: !!r });
+    }
+    if (op === "result") {
+      // Both players say who won. Rated when they agree, or when only the one who stayed reports after the other left.
+      await db.prepare("DELETE FROM hoopres WHERE t<?").bind(now - 3 * 3600000).run();
+      const g = await db.prepare("SELECT * FROM hoopres WHERE code=?").bind(code).first();
+      if (!g || (g.host !== pid && g.guest !== pid)) return json({ error: "No game." }, 404);
+      const host = g.host === pid, won = body.won ? 1 : 0, left = body.left ? 1 : 0;
+      const done = async dd => { const e = (await db.prepare("SELECT elo FROM players WHERE pid=?").bind(pid).first())?.elo ?? 1000; return json({ delta: host ? dd : -dd, elo: e }); };
+      if (g.dd != null && g.dd !== -9999) return done(g.dd);
+      if (host ? g.hr == null : g.gr == null)
+        await db.prepare(`UPDATE hoopres SET ${host ? "hr=?, hleft=?" : "gr=?, gleft=?"}, rt=COALESCE(rt,?) WHERE code=?`).bind(won, left, now, code).run();
+      const f = await db.prepare("SELECT * FROM hoopres WHERE code=?").bind(code).first();
+      let hostWon = null;
+      if (f.hr != null && f.gr != null) { if (f.hr + f.gr === 1) hostWon = f.hr === 1; else return json({ unrated: true }); }
+      else if (now - f.t > 60000 && now - f.rt > 12000 && ((f.hr === 1 && f.hleft) || (f.gr === 1 && f.gleft))) hostWon = f.hr === 1;
+      if (hostWon === null) return json({ pending: true });
+      const claim = await db.prepare("UPDATE hoopres SET dd=-9999 WHERE code=? AND dd IS NULL RETURNING code").bind(code).first();
+      if (!claim) return json({ pending: true }); // the other request is rating it
+      const get = async id => (await db.prepare("SELECT elo FROM players WHERE pid=?").bind(id).first())?.elo ?? 1000;
+      const eh = await get(f.host), eg = await get(f.guest), exp = 1 / (1 + 10 ** ((eg - eh) / 400)), d = Math.round(32 * ((hostWon ? 1 : 0) - exp));
+      const up = (id, name, delta, w) => db.prepare(`INSERT INTO players (pid,name,lname,elo,w,l,d,t) VALUES (?1,?2,NULL,1000+?3,?4,?5,0,?6)
+        ON CONFLICT(pid) DO UPDATE SET elo=elo+?3, w=w+?4, l=l+?5, t=?6`).bind(id, name, delta, w ? 1 : 0, w ? 0 : 1, now);
+      await db.batch([up(f.host, f.hname, d, hostWon), up(f.guest, f.gname, -d, !hostWon), db.prepare("UPDATE hoopres SET dd=? WHERE code=?").bind(d, code)]);
+      return done(d);
     }
     if (op === "cancel") { await db.prepare("DELETE FROM hoopnet WHERE code=? AND (host=? OR guest=?)").bind(code, pid, pid).run(); return json({ ok: true }); }
     return json({ error: "Unknown." }, 404);
