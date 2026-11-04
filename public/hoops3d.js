@@ -5,7 +5,7 @@ import * as THREE from "./vendor/three.module.min.js";
 
 const RIM = new THREE.Vector3(0, 3.05, 0), RIM_R = 0.23, BALL_R = 0.12, BOARD_Z = -0.38;
 const ARC = 6.75, GRAV = 9.8, TO_WIN = 15, COURT_X = 7.5, COURT_Z = 13.5;
-const SPEED = 5.2, JUMP_V = 5.0, METER_TIME = 0.62, GREEN_C = 0.86;
+const SPEED = 5.2, JUMP_V = 6.0, METER_TIME = 0.62, GREEN_C = 0.86;
 const MOVES = { cross: { key: "KeyQ", label: "Cross", dur: 0.34, burst: 4.6 }, behind: { key: "KeyX", label: "Behind", dur: 0.4, burst: 4.2 },
   spin: { key: "KeyF", label: "Spin", dur: 0.5, burst: 4.8 }, stepback: { key: "KeyC", label: "Step back", dur: 0.36, burst: 4.4 } };
 
@@ -165,7 +165,7 @@ export function start(root, opts) {
     const press = shootDown && !shootWas, rel = !shootDown && shootWas;
     if (press && ground && !(pl.stumble > t)) {
       if (pl.hasBall && distToRim(pl.pos) < 1.9) { pl.vy = JUMP_V * 1.15; pl.dunking = true; pl.shooting = true; pl.meter = 0; pl.shotT = t; }
-      else if (pl.hasBall) { pl.shooting = true; pl.meter = 0; pl.shotT = t; pl.move = null; pl.jumpAt = t + 0.1; } // gather, then rise
+      else if (pl.hasBall) { pl.shooting = true; pl.meter = 0; pl.shotT = t; pl.move = null; pl.jumpAt = t + 0.07; } // gather, then rise
       else {
         pl.vy = JUMP_V * 0.9; pl.blockT = t;
         if (o.hasBall && !o.shooting && flat(o.pos).distanceTo(flat(pl.pos)) < 1.1 && Math.random() < 0.3) {

@@ -36,7 +36,8 @@ export function attachRig(p, rig, colors) {
   root.traverse(o => { if (o.isMesh) { o.material = /Joint/i.test(o.name) ? joints : body; o.castShadow = true; o.frustumCulled = false; } });
   const bone = n => root.getObjectByName("mixamorig:" + n) || root.getObjectByName("mixamorig" + n);
   const b = { L: bone("LeftHand"), R: bone("RightHand"), armL: bone("LeftArm"), armR: bone("RightArm"),
-    foreL: bone("LeftForeArm"), foreR: bone("RightForeArm"), spine: bone("Spine1") };
+    foreL: bone("LeftForeArm"), foreR: bone("RightForeArm"), spine: bone("Spine1"),
+    upL: bone("LeftUpLeg"), upR: bone("RightUpLeg"), legL: bone("LeftLeg"), legR: bone("RightLeg"), footL: bone("LeftFoot"), footR: bone("RightFoot") };
   if (!b.L || !b.R) return false;
   const mixer = new THREE.AnimationMixer(root), actions = {};
   for (const [k, c] of Object.entries(rig.clips)) { actions[k] = mixer.clipAction(c); actions[k].play(); actions[k].setEffectiveWeight(0); }
@@ -75,16 +76,27 @@ export function updateRig(p, t, dt, other) {
   else if (mv?.kind === "spin") { dip = 0.09; leanF += 0.3; }
   else if (mv?.kind === "stepback") { leanF = -0.35 * arc; dip = -0.08 * arc; }
   if (p.stumble > t) { leanF = -0.4; leanS = Math.sin(t * 9) * 0.4; }
-  if (p.shooting && p.y <= 0.01) dip = 0.05;
+  const air = p.y > 0.02;
+  if (p.shooting && !air) dip = 0.12; // gather
+  if (m.wasAir && !air) m.land = t; m.wasAir = air;
+  if (m.land && t - m.land < 0.25) dip = Math.max(dip, 0.1 * Math.sin(Math.PI * (t - m.land) / 0.25)); // soft landing
+  if (air && (p.shooting || p.released)) leanF = 0.05;
   m.dip = lerp(m.dip || 0, dip, ease(14)); m.lf = lerp(m.lf || 0, leanF, ease(12)); m.ls = lerp(m.ls || 0, leanS, ease(12)); m.tw = lerp(m.tw || 0, twist, ease(12));
   m.root.position.y = m.baseY - m.dip;
   p.group.updateMatrixWorld(true);
   turn(m.b.spine, X, m.lf, p.group); turn(m.b.spine, Z, -m.ls * (m.mirror ? -1 : 1), p.group); turn(m.b.spine, Y, m.tw, p.group);
   // arms: blend in overhead (shots, blocks, dunks) or wide (defense)
-  const up = (p.shooting && p.hasBall) || (p.released && t - p.released < 0.6) || p.dunking || (p.blockT && t - p.blockT < 0.7);
+  const followT = p.released ? t - p.released : 9, follow = followT < 0.6;
+  const up = (p.shooting && p.hasBall) || follow || p.dunking || (p.blockT && t - p.blockT < 0.7);
+  // shot path: ball at the chest on the gather, rising to the set point, then snapped up on release
+  const rise = p.shooting && p.hasBall ? Math.min(1, (p.meter || 0) * 1.25) : 1;
+  m.rise = lerp(m.rise ?? 1, rise, ease(18));
   m.upW = lerp(m.upW || 0, up ? 1 : 0, ease(up ? 16 : 8));
   m.defW = lerp(m.defW || 0, def && !up ? 1 : 0, ease(6));
-  if (m.upW > 0.01) aimArms(m, p.group, side => tv.set(side * 0.12, 1, p.released ? 0.15 : 0.4), m.upW);
+  if (m.upW > 0.01) aimArms(m, p.group, side => follow && !p.hasBall ? tv.set(side * 0.08, 1, 0.3) : tv.set(side * (0.35 - 0.23 * m.rise), -0.2 + 1.2 * m.rise, 0.9 - 0.5 * m.rise), m.upW);
+  // legs tuck a little in the air
+  m.airW = lerp(m.airW || 0, air ? 1 : 0, ease(10));
+  if (m.airW > 0.01) aimLegs(m, p.group, m.airW);
   if (m.defW > 0.01) aimArms(m, p.group, side => tv.set(side * 0.85, -0.15 + Math.sin(t * 5 + side) * 0.25, 0.45), m.defW);
   // the game reads hand positions for the ball
   p.hands = m.mirror ? [m.b.R, m.b.L] : [m.b.L, m.b.R];
@@ -106,6 +118,21 @@ function aimArms(m, group, dirFn, w) {
       j.getWorldPosition(tmpA); child.getWorldPosition(tmpB);
       qx.setFromUnitVectors(tmpB.sub(tmpA).normalize(), want);
       qx.slerp(qi.identity(), 1 - w);
+      j.parent.getWorldQuaternion(qa); qinv.copy(qa).invert();
+      j.quaternion.premultiply(qinv.multiply(qx).multiply(qa));
+    }
+  }
+}
+
+const leg = new THREE.Vector3(), shin = new THREE.Vector3();
+function aimLegs(m, group, w) {
+  group.getWorldQuaternion(qp);
+  for (const [up, low, foot, f] of [[m.b.upL, m.b.legL, m.b.footL, 0.45], [m.b.upR, m.b.legR, m.b.footR, 0.25]]) {
+    if (!up || !low || !foot) continue;
+    leg.set(0, -1, f).normalize().applyQuaternion(qp); shin.set(0, -1, -f * 1.4).normalize().applyQuaternion(qp);
+    for (const [j, child, d] of [[up, low, leg], [low, foot, shin]]) {
+      j.updateMatrixWorld(true); j.getWorldPosition(tmpA); child.getWorldPosition(tmpB);
+      qx.setFromUnitVectors(tmpB.sub(tmpA).normalize(), d); qx.slerp(qi.identity(), 1 - w);
       j.parent.getWorldQuaternion(qa); qinv.copy(qa).invert();
       j.quaternion.premultiply(qinv.multiply(qx).multiply(qa));
     }
