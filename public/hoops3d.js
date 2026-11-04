@@ -143,7 +143,7 @@ export function start(root, opts) {
     else if (kind === "behind") { pl.hand = 1 - pl.hand; dir = side.clone().multiplyScalar(pl.hand ? -0.8 : 0.8).addScaledVector(fwd, 0.6); }
     else if (kind === "spin") { const s = Math.random() < .5 ? 1 : -1; pl.spinDir = s; dir = fwd.clone().addScaledVector(side, s * 0.8); }
     else { dir = fwd.clone().multiplyScalar(-1); pl.space = t + 1.4; }
-    pl.move = { kind, t0: t, dur: M.dur, dir: dir.normalize(), from: pl.hand }; pl.moveCool = t + M.dur + 0.25;
+    pl.move = { kind, t0: t, dur: M.dur, dir: dir.normalize(), from: kind === "cross" || kind === "behind" ? 1 - pl.hand : pl.hand }; pl.moveCool = t + M.dur + 0.25;
     tone(kind === "spin" ? 260 : 420, .05, "triangle", .07);
     // ankle breaker: defender close and caught leaning
     const o = players[1 - pl.team], gap = flat(o.pos).distanceTo(flat(pl.pos)), chance = { cross: .28, behind: .22, spin: .32, stepback: .22 }[kind];

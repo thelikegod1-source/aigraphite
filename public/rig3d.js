@@ -30,7 +30,7 @@ function inPlace(clip) {
 export function attachRig(p, rig, colors) {
   const root = cloneSkinned(rig.scene);
   const box = new THREE.Box3().setFromObject(root), h = box.max.y - box.min.y || 1, s = HEIGHT / h;
-  root.scale.setScalar(s); root.position.y = -box.min.y * s;
+  root.scale.setScalar(s); root.position.y = -box.min.y * s; const baseY = root.position.y;
   const body = new THREE.MeshStandardMaterial({ color: colors.jersey, roughness: 0.55, metalness: 0.1 });
   const joints = new THREE.MeshStandardMaterial({ color: colors.trim === 0xffffff ? 0xe9edf5 : 0x1b1b1f, roughness: 0.4, metalness: 0.3 });
   root.traverse(o => { if (o.isMesh) { o.material = /Joint/i.test(o.name) ? joints : body; o.castShadow = true; o.frustumCulled = false; } });
@@ -41,7 +41,7 @@ export function attachRig(p, rig, colors) {
   const mixer = new THREE.AnimationMixer(root), actions = {};
   for (const [k, c] of Object.entries(rig.clips)) { actions[k] = mixer.clipAction(c); actions[k].play(); actions[k].setEffectiveWeight(0); }
   p.hip.visible = false; p.group.add(root);
-  p.mx = { root, mixer, actions, b, s, cur: null, mirror: false };
+  p.mx = { root, mixer, actions, b, s, baseY, cur: null, mirror: false };
   return true;
 }
 
@@ -57,39 +57,57 @@ const X = new THREE.Vector3(1, 0, 0);
 
 export function updateRig(p, t, dt, other) {
   const m = p.mx; if (!m) return;
-  const speed = Math.min(1, Math.hypot(p.vel.x, p.vel.z) / 5.2);
-  // which clip: dribble is the only one so far, so it doubles as a ready stance
+  const speed = Math.min(1, Math.hypot(p.vel.x, p.vel.z) / 5.2), ease = k => 1 - Math.exp(-k * dt);
+  const mv = p.move, mk = mv ? Math.min(1, (t - mv.t0) / mv.dur) : 0, arc = Math.sin(Math.PI * mk);
   const want = m.actions.dribble ? "dribble" : null;
   if (want !== m.cur) { for (const [k, a] of Object.entries(m.actions)) a.setEffectiveWeight(k === want ? 1 : 0); m.cur = want; }
-  if (m.actions.dribble) m.actions.dribble.timeScale = p.hasBall ? 1 + speed * 0.5 : 0.25;
-  // dribble clip uses the right hand; mirror the body for left-hand dribbles
-  const mirror = p.hasBall && p.hand === 0;
+  if (m.actions.dribble) m.actions.dribble.timeScale = p.hasBall ? (mv ? 1.8 : 1 + speed * 0.5) : 0.25;
+  // dribble clip uses the right hand; mirror for left-hand dribbles.
+  // During a cross the swap happens when the ball is at the floor, mid-move.
+  const hand = mv && (mv.kind === "cross" || mv.kind === "behind") && mk < 0.5 ? mv.from : p.hand;
+  const mirror = p.hasBall && hand === 0;
   if (mirror !== m.mirror) { m.mirror = mirror; m.root.scale.x = mirror ? -m.s : m.s; }
   m.mixer.update(dt);
+  // body: dip and lean into moves, sit down on defense, lean back on step backs
+  const def = !p.hasBall && other.hasBall;
+  let dip = def ? 0.06 : 0, leanF = def ? 0.3 : p.hasBall ? 0.1 + speed * 0.15 : speed * 0.15, leanS = 0, twist = 0;
+  if (mv?.kind === "cross" || mv?.kind === "behind") { const sgn = p.hand ? -1 : 1; dip = 0.1 * arc; leanF += 0.25 * arc; leanS = sgn * 0.35 * arc; twist = sgn * 0.4 * arc; }
+  else if (mv?.kind === "spin") { dip = 0.09; leanF += 0.3; }
+  else if (mv?.kind === "stepback") { leanF = -0.35 * arc; dip = -0.08 * arc; }
+  if (p.stumble > t) { leanF = -0.4; leanS = Math.sin(t * 9) * 0.4; }
+  if (p.shooting && p.y <= 0.01) dip = 0.05;
+  m.dip = lerp(m.dip || 0, dip, ease(14)); m.lf = lerp(m.lf || 0, leanF, ease(12)); m.ls = lerp(m.ls || 0, leanS, ease(12)); m.tw = lerp(m.tw || 0, twist, ease(12));
+  m.root.position.y = m.baseY - m.dip;
   p.group.updateMatrixWorld(true);
-  // tweaks on top of the clip
-  const up = p.shooting && p.hasBall ? 2.5 : (p.released && t - p.released < 0.6) || p.dunking || (p.blockT && t - p.blockT < 0.7) ? 2.9 : 0;
-  if (up) raiseArms(m, up, p.group);
-  else if (!p.hasBall && other.hasBall) turn(m.b.spine, X, 0.25, p.group);
+  turn(m.b.spine, X, m.lf, p.group); turn(m.b.spine, Z, -m.ls * (m.mirror ? -1 : 1), p.group); turn(m.b.spine, Y, m.tw, p.group);
+  // arms: blend in overhead (shots, blocks, dunks) or wide (defense)
+  const up = (p.shooting && p.hasBall) || (p.released && t - p.released < 0.6) || p.dunking || (p.blockT && t - p.blockT < 0.7);
+  m.upW = lerp(m.upW || 0, up ? 1 : 0, ease(up ? 16 : 8));
+  m.defW = lerp(m.defW || 0, def && !up ? 1 : 0, ease(6));
+  if (m.upW > 0.01) aimArms(m, p.group, side => tv.set(side * 0.12, 1, p.released ? 0.15 : 0.4), m.upW);
+  if (m.defW > 0.01) aimArms(m, p.group, side => tv.set(side * 0.85, -0.15 + Math.sin(t * 5 + side) * 0.25, 0.45), m.defW);
   // the game reads hand positions for the ball
   p.hands = m.mirror ? [m.b.R, m.b.L] : [m.b.L, m.b.R];
   p.handL = p.hands[0]; p.handR = p.hands[1];
 }
+const lerp = (a, b, k) => a + (b - a) * k;
+const Y = new THREE.Vector3(0, 1, 0), Z = new THREE.Vector3(0, 0, 1), tv = new THREE.Vector3();
 
-// arms straight overhead for shots, blocks and dunks
-const tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3(), want = new THREE.Vector3(), qx = new THREE.Quaternion();
-function raiseArms(m, up, group) {
+// point upper arm + forearm along a direction in player space (side: -1 left, +1 right), blended by w
+const tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3(), want = new THREE.Vector3(), qx = new THREE.Quaternion(), qi = new THREE.Quaternion(), qinv = new THREE.Quaternion();
+function aimArms(m, group, dirFn, w) {
   group.getWorldQuaternion(qp);
-  for (const [arm, fore, hand] of [[m.b.armL, m.b.foreL, m.b.L], [m.b.armR, m.b.foreR, m.b.R]]) {
+  const flip = m.mirror ? -1 : 1;
+  for (const [arm, fore, hand, side] of [[m.b.armL, m.b.foreL, m.b.L, 1], [m.b.armR, m.b.foreR, m.b.R, -1]]) {
+    // model faces +z, so its left hand is +x; mirroring swaps that
+    want.copy(dirFn(side * flip)).normalize().applyQuaternion(qp);
     for (const [j, child] of [[arm, fore], [fore, hand]]) {
       j.updateMatrixWorld(true);
       j.getWorldPosition(tmpA); child.getWorldPosition(tmpB);
-      const cur = tmpB.sub(tmpA).normalize();
-      // target direction: up and slightly forward, more forward at the set point
-      want.set(0, 1, up < 2.7 ? 0.35 : 0.1).normalize().applyQuaternion(qp);
-      qx.setFromUnitVectors(cur, want);
-      j.parent.getWorldQuaternion(qa); const inv = qa.clone().invert();
-      j.quaternion.premultiply(inv.multiply(qx).multiply(qa));
+      qx.setFromUnitVectors(tmpB.sub(tmpA).normalize(), want);
+      qx.slerp(qi.identity(), 1 - w);
+      j.parent.getWorldQuaternion(qa); qinv.copy(qa).invert();
+      j.quaternion.premultiply(qinv.multiply(qx).multiply(qa));
     }
   }
 }
