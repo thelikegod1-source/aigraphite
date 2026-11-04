@@ -640,7 +640,7 @@ export async function onRequest({ request, env, params }) {
       const f = await db.prepare("SELECT * FROM hoopres WHERE code=?").bind(code).first();
       let hostWon = null;
       if (f.hr != null && f.gr != null) { if (f.hr + f.gr === 1) hostWon = f.hr === 1; else return json({ unrated: true }); }
-      else if (now - f.t > 60000 && now - f.rt > 12000 && ((f.hr === 1 && f.hleft) || (f.gr === 1 && f.gleft))) hostWon = f.hr === 1;
+      else if (now - f.t > 20000 && now - f.rt > 8000 && ((f.hr === 1 && f.hleft) || (f.gr === 1 && f.gleft))) hostWon = f.hr === 1;
       if (hostWon === null) return json({ pending: true });
       const claim = await db.prepare("UPDATE hoopres SET dd=-9999 WHERE code=? AND dd IS NULL RETURNING code").bind(code).first();
       if (!claim) return json({ pending: true }); // the other request is rating it

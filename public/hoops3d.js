@@ -5,10 +5,12 @@ import * as THREE from "./vendor/three.module.min.js";
 
 const RIM = new THREE.Vector3(0, 3.05, 0), RIM_R = 0.23, BALL_R = 0.12, BOARD_Z = -0.38;
 const ARC = 6.75, GRAV = 9.8, TO_WIN = 15, COURT_X = 7.5, COURT_Z = 13.5;
-const SPEED = 5.2, JUMP_V = 6.0, METER_TIME = 0.62, GREEN_C = 0.86;
-const MOVES = { cross: { key: "KeyQ", label: "Cross", dur: 0.34, burst: 4.6 }, behind: { key: "KeyX", label: "Behind", dur: 0.4, burst: 4.2 },
+const SPEED = 5.2, JUMP_V = 6.0, METER_TIME = 0.56, GREEN_C = 0.86;
+const MOVES = { hop: { key: "", label: "", dur: 0.42, burst: 3.6, hidden: true }, cross: { key: "KeyQ", label: "Cross", dur: 0.34, burst: 4.6 }, behind: { key: "KeyX", label: "Behind", dur: 0.4, burst: 4.2 },
   spin: { key: "KeyF", label: "Spin", dur: 0.5, burst: 4.8 }, stepback: { key: "KeyC", label: "Step back", dur: 0.36, burst: 4.4 } };
 
+// hand high/low points in the Mixamo dribble clip (seconds), measured from the animation
+const DRIB = { dur: 2.0833, max: [0, 0.71, 1.42, 2.0833], min: [0.33, 1.07, 1.77] };
 export function start(root, opts) {
   // online: host runs the game, guest sends inputs and draws the host's state
   const ONLINE = opts.online || null, NET = ONLINE?.net, GUEST = ONLINE?.role === "guest", ME = GUEST ? 1 : 0;
@@ -24,7 +26,7 @@ export function start(root, opts) {
       <div class="h3-meter" id="hmeterbar" aria-hidden="true"><i class="h3-green" id="hgreen"></i><i class="h3-fill" id="hfill"></i></div>
       <div class="h3-fb" id="hfb"></div>
       <div class="h3-stick" id="hstick"><i id="hknob"></i></div>
-      <div class="h3-moves" id="hmoves">${Object.entries(MOVES).map(([k, m]) => `<button class="h3-mv" data-mv="${k}" aria-label="${m.label}">${m.label}<small>${m.key.slice(3)}</small></button>`).join("")}</div>
+      <div class="h3-moves" id="hmoves">${Object.entries(MOVES).filter(([, m]) => !m.hidden).map(([k, m]) => `<button class="h3-mv" data-mv="${k}" aria-label="${m.label}">${m.label}<small>${m.key.slice(3)}</small></button>`).join("")}</div>
       <button class="h3-shoot" id="hshoot" aria-label="Shoot, block or steal"><span id="hlbl">Shoot</span><small>E</small></button>
     </div>
     <p class="small hp-help">Move: joystick or WASD · Shoot: hold E (or the button), let go in the <b style="color:var(--win)">green</b> · Moves: Q cross · X behind the back · F spin · C step back · On defense E blocks or steals</p>
@@ -123,14 +125,14 @@ export function start(root, opts) {
   const distToRim = p => Math.hypot(p.x - RIM.x, p.z - RIM.z);
   const fwdOf = p => new THREE.Vector3(Math.sin(p.facing), 0, Math.cos(p.facing));
   const greenWidth = pl => { const d = distToRim(pl.pos), o = players[1 - pl.team], gap = flat(o.pos).distanceTo(flat(pl.pos));
-    const contest = gap < 1.6 && !o.stumble ? (1 - gap / 1.6) : 0; return Math.max(0.035, 0.13 - d * 0.006 - contest * 0.06 + (pl.space > t ? 0.04 : 0)); };
+    const contest = gap < 1.6 && !o.stumble ? (1 - gap / 1.6) : 0; return Math.max(0.03, 0.105 - d * 0.0075 - contest * 0.05 + (pl.space > t ? 0.035 : 0)); };
   // how well the defender is guarding this shot: 0 open → 1 smothered
   function contestOf(pl) {
     const def = players[1 - pl.team]; if (def.stumble > t) return 0;
     const gap = flat(def.pos).distanceTo(flat(pl.pos)); if (gap > 1.8) return 0;
     const toRim = flat(RIM).sub(flat(pl.pos)).normalize(), toDef = flat(def.pos).sub(flat(pl.pos)).normalize();
     const front = toRim.dot(toDef) > 0.25 ? 1 : 0.45; // between shooter and hoop
-    const hands = def.y > 0.2 || (def.blockT && t - def.blockT < 0.6) ? 1 : 0.55; // jumping or hand up
+    const hands = def.y > 0.2 || (def.blockT && t - def.blockT < 0.6) ? 1 : gap < 1.2 ? 0.88 : 0.6; // jumping, or just being right on them
     return Math.min(1, (1 - gap / 1.8) * 1.35) * front * hands;
   }
   function release(pl) {
@@ -140,7 +142,7 @@ export function start(root, opts) {
     const quality = green ? 1 : Math.max(0, 1 - (off - w / 2) * 3);
     // in your face with a hand up beats even a green; a medium contest makes it a coin flip
     const smother = contest > 0.62, risky = green && !smother && Math.random() < contest * 0.9;
-    const err = green ? (smother ? 0.3 + contest * 0.25 : risky ? 0.17 + contest * 0.1 : 0.012) : (1 - quality) * 0.26 + d * 0.006 + contest * 0.18 + Math.abs(Math.random() + Math.random() - 1) * 0.05;
+    const err = green ? (smother ? 0.3 + contest * 0.25 : risky ? 0.17 + contest * 0.1 : 0.012) : 0.03 + (1 - quality) * 0.26 + d * 0.006 + contest * 0.18 + Math.abs(Math.random() + Math.random() - 1) * 0.05;
     if (pl.team === ME || NET) say(pl.team, { fb: green && smother ? ["GREEN · SMOTHERED", "r"] : green && risky ? ["GREEN · CONTESTED", "r"] : green ? ["GREEN!", "g"] : [m < GREEN_C ? (off > .2 ? "VERY EARLY" : "SLIGHTLY EARLY") : (off > .12 ? "VERY LATE" : "SLIGHTLY LATE"), "r"] });
     const a = Math.random() * Math.PI * 2, target = RIM.clone().add(new THREE.Vector3(Math.cos(a) * err, 0.02, Math.sin(a) * err + 0.02));
     const T = 0.75 + d * 0.06, v = target.clone().sub(from).add(new THREE.Vector3(0, 0.5 * GRAV * T * T, 0)).divideScalar(T);
@@ -194,7 +196,12 @@ export function start(root, opts) {
     pl.pos.x = Math.max(-COURT_X, Math.min(COURT_X, pl.pos.x)); pl.pos.z = Math.max(-1.2, Math.min(COURT_Z, pl.pos.z));
     const press = shootDown && !shootWas, rel = !shootDown && shootWas;
     if (press && ground && !(pl.stumble > t)) {
-      if (pl.hasBall && distToRim(pl.pos) < 1.9) { pl.vy = JUMP_V * 1.15; pl.dunking = true; pl.shooting = true; pl.meter = 0; pl.shotT = t; }
+      const away = pl.vel.x * (pl.pos.x - RIM.x) + pl.vel.z * (pl.pos.z - RIM.z), backing = pl.hasBall && !pl.move && away / (distToRim(pl.pos) || 1) > 1.6;
+      if (backing) { // tap E while running away from the hoop: hop back, no travel, and some space
+        const dir = flat(pl.pos).sub(flat(RIM)).normalize();
+        pl.move = { kind: "hop", t0: t, dur: 0.42, dir, from: pl.hand }; pl.moveCool = t + 0.6; pl.vy = 2.6; pl.space = t + 1.4; pl.hopT = t;
+        tone(300, .05, "triangle", .07); say(pl.team, { m: ["HOP BACK", 600] });
+      } else if (pl.hasBall && distToRim(pl.pos) < 1.9) { pl.dunkStyle = Math.random() * 4 | 0; pl.vy = JUMP_V * 1.15; pl.dunking = true; pl.shooting = true; pl.meter = 0; pl.shotT = t; }
       else if (pl.hasBall) { pl.shooting = true; pl.meter = 0; pl.shotT = t; pl.move = null; pl.jumpAt = t + 0.07; } // gather, then rise
       else if (o.hasBall && !o.shooting && !o.dunking && flat(o.pos).distanceTo(flat(pl.pos)) < 1.3) {
         // reach: best when you poke at the ball side while it's low in the dribble
@@ -219,7 +226,7 @@ export function start(root, opts) {
       if (rel || pl.meter >= 1.05) release(pl);
     } else if (pl.dunking && pl.hasBall && rel) { pl.dunking = false; pl.meter = GREEN_C - 0.05; release(pl); } // let go early: layup
     // facing: toward motion, or the hoop when shooting / holding
-    const face = pl.move?.kind === "stepback" ? Math.atan2(RIM.x - pl.pos.x, RIM.z - pl.pos.z)
+    const face = pl.move?.kind === "stepback" || pl.move?.kind === "hop" ? Math.atan2(RIM.x - pl.pos.x, RIM.z - pl.pos.z)
       : pl.vel.lengthSq() > 0.3 && !pl.shooting ? Math.atan2(pl.vel.x, pl.vel.z)
       : pl.hasBall || pl.shooting ? Math.atan2(RIM.x - pl.pos.x, RIM.z - pl.pos.z) : Math.atan2(o.pos.x - pl.pos.x, o.pos.z - pl.pos.z);
     pl.facing += Math.atan2(Math.sin(face - pl.facing), Math.cos(face - pl.facing)) * 0.2;
@@ -236,8 +243,24 @@ export function start(root, opts) {
         if (pl.move.kind === "behind") ball.p.addScaledVector(fwdOf(pl), -0.35 * Math.sin(Math.PI * k));
         return;
       }
-      // dribble: hand → floor → hand, synced with the arm animation
       pl.hands[pl.hand].getWorldPosition(tmp);
+      const da = pl.mx?.actions?.dribbleU;
+      if (da) {
+        // the clip pushes the ball down from the top of the hand's path to the bottom (3 bounces per loop);
+        // from the bottom the ball drops to the floor and comes back up into the hand at its next high point
+        const T = da.time % DRIB.dur; let i = 0; while (i < 2 && T > DRIB.max[i + 1]) i++;
+        const lo = DRIB.min[i], hi = DRIB.max[i + 1];
+        if (T < lo && T >= DRIB.max[i]) { ball.p.set(tmp.x, tmp.y - 0.1, tmp.z); pl.ballOut = null; }
+        else {
+          const k = Math.min(1, (T - lo) / (hi - lo)), FL = 0.45;
+          if (!pl.ballOut) pl.ballOut = tmp.y - 0.1;
+          const y = k < FL ? pl.ballOut + (BALL_R - pl.ballOut) * (k / FL) ** 2 : BALL_R + (tmp.y - 0.1 - BALL_R) * (1 - (1 - (k - FL) / (1 - FL)) ** 2);
+          ball.p.set(tmp.x, Math.max(BALL_R, y), tmp.z);
+          if (k >= FL && !pl.bounced) { pl.bounced = true; if (pl.team === ME) tone(95, .04, "sine", .05); } else if (k < FL) pl.bounced = false;
+        }
+        ball.spin += dt * 6;
+        return;
+      }
       const u = (pl.drib % 1), b = Math.abs(Math.cos(Math.PI * u));
       ball.p.set(tmp.x, 0.13 + (tmp.y - 0.17) * b, tmp.z);
       if (u > 0.47 && u < 0.53 && !pl.bounced) { pl.bounced = true; if (pl.team === ME) tone(95, .04, "sine", .05); } else if (u < 0.4) pl.bounced = false;
@@ -270,6 +293,13 @@ export function start(root, opts) {
     if (pause <= 0 && ball.cool <= 0) for (const pl of players) {
       if (pl.stumble > t) continue;
       if (Math.hypot(ball.p.x - pl.pos.x, ball.p.z - pl.pos.z) < 0.75 && ball.p.y < 2.5 + pl.y) {
+        // goaltending: touching a shot on its way down while it's still above the rim counts as a bucket
+        const s = ball.shot;
+        if (s && pl.team !== s.team && ball.v.y < 0 && ball.p.y > RIM.y - 0.1 && Math.hypot(ball.p.x - RIM.x, ball.p.z - RIM.z) < 1.4) {
+          ball.shot = null; ball.v.set(0, 0, 0); netSwish = t; say(pl.team, { m: ["GOALTENDING", 1100] }); say(1 - pl.team, { m: ["GOALTEND · COUNTS", 1100] });
+          scored(s.team, s.value, false); break;
+        }
+        if (s && ball.p.y > RIM.y + 0.15) continue; // can't snatch a live shot out of the air above the rim
         ball.holder = pl; pl.hasBall = true; pl.hand = 1; pl.shooting = false; players[1 - pl.team].hasBall = false; ball.shot = null;
         if (pl.team === 1) { ai.shootAt = 0; ai.thinkAt = 0; ai.holdUntil = 0; }
         possClock = 12;
@@ -401,7 +431,10 @@ export function start(root, opts) {
     over = true; NET?.close(); cancelAnimationFrame(raf); removeEventListener("keydown", onKey); removeEventListener("keyup", onKey);
     renderer.dispose(); scene.traverse(o => { o.geometry?.dispose?.(); if (o.material) [].concat(o.material).forEach(m => { m.map?.dispose?.(); m.dispose?.(); }); });
   }
-  root.querySelector("#hquit").onclick = () => { cleanup(); opts.onExit(); };
+  root.querySelector("#hquit").onclick = () => {
+    if (ONLINE && !over && opts.onResult) opts.onResult(false, false).catch(() => {}); // quitting a ranked game is a loss
+    cleanup(); opts.onExit();
+  };
   // ---------- online ----------
   const remote = { x: 0, z: 0, s: false, was: false, relMeter: null, seq: 0, relSeq: 0 };
   let sendAcc = 0, snap = null, snapAt = 0, gSeq = 0, gWas = false, gMeter = 0, gShootT = 0, gSendAcc = 0;
@@ -410,7 +443,7 @@ export function start(root, opts) {
   function sendState(dt) {
     sendAcc += dt; if (sendAcc < 0.045) return; sendAcc = 0;
     NET.send({ st: 1, P: players.map(p => [+p.pos.x.toFixed(3), +p.pos.z.toFixed(3), +p.y.toFixed(3), +p.vel.x.toFixed(2), +p.vel.z.toFixed(2), +p.facing.toFixed(3), bits(p), p.hand,
-      p.move ? p.move.kind : 0, p.move ? +((t - p.move.t0) / p.move.dur).toFixed(3) : 0, p.move?.from ?? 0, p.stumble > t ? +(p.stumble - t).toFixed(2) : 0, age(p.released), age(p.blockT), age(p.slam), +(p.meter || 0).toFixed(3), p.spinDir || 1, p.hang > t ? 1 : 0, age(p.reachT)]),
+      p.move ? p.move.kind : 0, p.move ? +((t - p.move.t0) / p.move.dur).toFixed(3) : 0, p.move?.from ?? 0, p.stumble > t ? +(p.stumble - t).toFixed(2) : 0, age(p.released), age(p.blockT), age(p.slam), +(p.meter || 0).toFixed(3), p.spinDir || 1, p.hang > t ? 1 : 0, age(p.reachT), p.dunkStyle || 0]),
       B: [+ball.p.x.toFixed(3), +ball.p.y.toFixed(3), +ball.p.z.toFixed(3), +ball.v.x.toFixed(2), +ball.v.y.toFixed(2), +ball.v.z.toFixed(2), ball.holder ? ball.holder.team : -1],
       o: offense, c: +possClock.toFixed(1) }, true);
   }
@@ -436,7 +469,7 @@ export function start(root, opts) {
       p.hasBall = !!(a[6] & 1); p.shooting = !!(a[6] & 2); p.dunking = !!(a[6] & 4); p.hand = a[7]; p.spinDir = a[16];
       p.move = a[8] ? { kind: a[8], dur: MOVES[a[8]].dur, t0: t - a[9] * MOVES[a[8]].dur, from: a[10] } : null;
       p.stumble = a[11] ? t + a[11] : 0; p.released = a[12] >= 0 ? t - a[12] : 0; p.blockT = a[13] >= 0 ? t - a[13] : 0; p.slam = a[14] >= 0 ? t - a[14] : 0;
-      p.meter = i === ME && gMeter ? gMeter : a[15]; p.hang = a[17] ? t + 0.05 : 0; p.reachT = a[18] >= 0 ? t - a[18] : 0;
+      p.meter = i === ME && gMeter ? gMeter : a[15]; p.hang = a[17] ? t + 0.05 : 0; p.reachT = a[18] >= 0 ? t - a[18] : 0; p.dunkStyle = a[19];
     });
     const h = snap.B[6]; ball.holder = h >= 0 ? players[h] : null;
     if (snap.o !== offense) { offense = snap.o; posUI(offense); }
@@ -585,6 +618,7 @@ function animatePlayer(p, t, dt, other) {
     pose(p.armL.sh, -run * 0.8 * speed, -0.08); pose(p.armR.sh, -run2 * 0.8 * speed, 0.08); pose(p.armL.el, -0.35 - speed * 0.6); pose(p.armR.el, -0.35 - speed * 0.6);
     p.handR.rotation.x = lerp(p.handR.rotation.x, 0, .3);
   }
+  if (p.dunking && p.dunkStyle === 2) spinRot = Math.min(1, p.y / 1.4) * Math.PI * 2;
   if (p.move?.kind === "spin") spinRot = Math.min(1, (t - p.move.t0) / p.move.dur) * Math.PI * 2 * (p.spinDir || 1);
   if (p.move?.kind === "stepback") lean = -0.25;
   p.group.rotation.y = p.facing + spinRot;

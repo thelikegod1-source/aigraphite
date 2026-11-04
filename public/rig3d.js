@@ -93,7 +93,7 @@ export function updateRig(p, t, dt, other) {
   let dip = def ? 0.07 : 0, leanF = def ? 0.22 : p.hasBall ? 0.1 + speed * 0.15 : speed * 0.15, leanS = 0, twist = 0;
   if (mv?.kind === "cross" || mv?.kind === "behind") { const sgn = p.hand ? -1 : 1; dip = 0.1 * arc; leanF += 0.25 * arc; leanS = sgn * 0.35 * arc; twist = sgn * 0.4 * arc; }
   else if (mv?.kind === "spin") { dip = 0.09; leanF += 0.3; }
-  else if (mv?.kind === "stepback") { leanF = -0.35 * arc; dip = -0.08 * arc; }
+  else if (mv?.kind === "stepback" || mv?.kind === "hop") { leanF = -0.35 * arc; dip = -0.08 * arc; }
   if (p.stumble > t) { leanF = -0.4; leanS = Math.sin(t * 9) * 0.4; }
   const air = p.y > 0.02;
   if (p.shooting && !air) dip = 0.12; // gather
@@ -115,7 +115,7 @@ export function updateRig(p, t, dt, other) {
   m.defW = lerp(m.defW || 0, def && !up ? 1 : 0, ease(6));
   if (m.upW > 0.01) aimArms(m, p.group, side =>
       hang && !(p.slam && t - p.slam < 0.15) ? tv.set(side * 0.12, 1, 0.12) // hanging on the rim
-      : p.dunking ? tv.set(side * 0.18, 1, -0.55 + Math.min(1, p.y / 1.2) * 0.25) // ball cocked back behind the head
+      : p.dunking ? dunkArm(p, side)
       : slam ? tv.set(side * 0.1, 0.6, 0.8) // throw it down
       : follow && !p.hasBall ? tv.set(side * 0.08, 1, 0.3)
       : tv.set(side * (0.35 - 0.23 * m.rise), -0.2 + 1.2 * m.rise, 0.9 - 0.5 * m.rise), m.upW);
@@ -131,6 +131,19 @@ export function updateRig(p, t, dt, other) {
   p.handL = p.hands[0]; p.handR = p.hands[1];
 }
 const lerp = (a, b, k) => a + (b - a) * k;
+// arm direction on the way up for each dunk style (side: +1 / -1 per arm)
+function dunkArm(p, side) {
+  const k = Math.min(1, p.y / 1.3);
+  switch (p.dunkStyle) {
+    case 1: return tv.set(side * 0.25, 0.4 + k * 0.6, 0.9 - k * 0.5); // two hands, rising straight at the rim
+    case 2: return tv.set(side * 0.15, 1, -0.2); // 360: ball held overhead while spinning
+    case 3: { // windmill: the ball arm swings a full circle, the other arm reaches up
+      if (side < 0) { const a = -Math.PI / 2 + k * Math.PI * 2; return tv.set(-0.15, Math.sin(a), Math.cos(a)); }
+      return tv.set(0.4, 0.8, 0.4);
+    }
+    default: return tv.set(side * 0.18, 1, -0.55 + k * 0.25); // tomahawk: cocked back behind the head
+  }
+}
 const Y = new THREE.Vector3(0, 1, 0), Z = new THREE.Vector3(0, 0, 1), tv = new THREE.Vector3();
 
 // point upper arm + forearm along a direction in player space (side: -1 left, +1 right), blended by w

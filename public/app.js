@@ -143,7 +143,7 @@ async function hoopsOnline(mode, code) {
     const names = link.role === "host" ? [me.name, link.opp] : [link.opp, me.name];
     const onResult = async (won, left) => {
       let r = await api("hoops/result", { code: link.code, won, left });
-      for (let i = 0; i < 3 && r.pending; i++) { await new Promise(res => setTimeout(res, i ? 6000 : 13000)); r = await api("hoops/result", { code: link.code, won, left }); }
+      for (let i = 0; i < 3 && r.pending; i++) { await new Promise(res => setTimeout(res, i ? 5000 : 9000)); r = await api("hoops/result", { code: link.code, won, left }); }
       refreshMe?.().catch?.(() => {});
       return r;
     };
