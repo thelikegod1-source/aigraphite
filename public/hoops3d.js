@@ -6,7 +6,7 @@ import * as THREE from "./vendor/three.module.min.js";
 const RIM = new THREE.Vector3(0, 3.05, 0), RIM_R = 0.23, BALL_R = 0.12, BOARD_Z = -0.38;
 const ARC = 6.75, GRAV = 9.8, TO_WIN = 15, COURT_X = 7.5, COURT_Z = 13.5;
 const SPEED = 5.2, JUMP_V = 6.0, METER_TIME = 0.56, GREEN_C = 0.86;
-const MOVES = { hop: { key: "", label: "", dur: 0.42, burst: 3.6, hidden: true }, cross: { key: "KeyQ", label: "Cross", dur: 0.34, burst: 4.6 }, behind: { key: "KeyX", label: "Behind", dur: 0.4, burst: 4.2 },
+const MOVES = { hop: { key: "", label: "", dur: 0.42, burst: 3.6, hidden: true }, cross: { key: "KeyQ", label: "Cross", dur: 0.34, burst: 4.6 }, behind: { key: "KeyX", label: "Behind", dur: 0.5, burst: 4.0 },
   spin: { key: "KeyF", label: "Spin", dur: 0.5, burst: 4.8 }, stepback: { key: "KeyC", label: "Step back", dur: 0.36, burst: 4.4 } };
 
 // hand high/low points in the Mixamo dribble clip (seconds), measured from the animation
@@ -240,7 +240,7 @@ export function start(root, opts) {
         const k = Math.min(1, (t - pl.move.t0) / pl.move.dur), a = pl.hands[pl.move.from], b = pl.hands[1 - pl.move.from];
         a.getWorldPosition(tmp); b.getWorldPosition(tmp2);
         ball.p.lerpVectors(tmp, tmp2, k); ball.p.y = 0.15 + (Math.max(tmp.y, tmp2.y) - 0.15) * Math.abs(Math.cos(Math.PI * k));
-        if (pl.move.kind === "behind") ball.p.addScaledVector(fwdOf(pl), -0.35 * Math.sin(Math.PI * k));
+        if (pl.move.kind === "behind") ball.p.addScaledVector(fwdOf(pl), -0.45 * Math.sin(Math.PI * k));
         return;
       }
       pl.hands[pl.hand].getWorldPosition(tmp);
