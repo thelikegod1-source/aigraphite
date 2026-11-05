@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Owner fingerprint</title>
+<meta name="robots" content="noindex">
+<style>
+:root{--bg:#0b1020;--fg:#e9edf5;--mut:#9aa6c0;--amber:#ffb238}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-serif;padding:24px 16px}
+main{max-width:520px;margin:auto}
+input,button{width:100%;box-sizing:border-box;font:inherit;padding:12px;border-radius:10px;border:1px solid #2a355a;background:#121a33;color:var(--fg);margin-top:10px}
+button{background:var(--amber);color:#16110a;font-weight:700;border:0}
+code{display:block;word-break:break-all;background:#121a33;padding:12px;border-radius:10px;margin-top:12px}
+p{color:var(--mut)}
+</style></head>
+<body><main>
+<h1>Owner fingerprint</h1>
+<p>Paste your player code. This page turns it into a fingerprint <b>on this device only</b> — nothing is sent anywhere. The fingerprint can't be used to log in, so it's safe to share.</p>
+<input id="c" placeholder="Your player code" autocomplete="off">
+<button id="go">Make fingerprint</button>
+<code id="out" hidden></code>
+</main>
+<script>
+document.getElementById("go").onclick = async () => {
+  const v = document.getElementById("c").value.trim();
+  if (!v) return;
+  const h = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(v));
+  const o = document.getElementById("out");
+  o.hidden = false; o.textContent = [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, "0")).join("");
+  document.getElementById("c").value = "";
+};
+</script>
+</body></html>
