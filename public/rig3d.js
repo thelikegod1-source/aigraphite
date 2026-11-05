@@ -107,7 +107,7 @@ export function updateRig(p, t, dt, other) {
   }
   // dribble clip uses the right hand; mirror for left-hand dribbles.
   // During a cross the swap happens when the ball is at the floor, mid-move.
-  const hand = mv && (mv.kind === "cross" || mv.kind === "behind") && mk < 0.5 ? mv.from : p.hand;
+  const hand = mv && (mv.kind === "cross" || mv.kind === "behind" || mv.kind === "swap") && mk < 0.5 ? mv.from : p.hand;
   const mirror = p.hasBall && hand === 0;
   if (mirror !== m.mirror) { m.mirror = mirror; m.root.scale.x = mirror ? -m.s : m.s; }
   m.mixer.update(dt);

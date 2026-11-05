@@ -6,7 +6,7 @@ import * as THREE from "./vendor/three.module.min.js";
 const RIM = new THREE.Vector3(0, 3.05, 0), RIM_R = 0.23, BALL_R = 0.12, BOARD_Z = -0.38;
 const ARC = 6.75, GRAV = 9.8, TO_WIN = 15, COURT_X = 7.5, COURT_Z = 13.5;
 const SPEED = 5.2, JUMP_V = 6.0, METER_TIME = 0.56, GREEN_C = 0.86;
-const MOVES = { hop: { key: "", label: "", dur: 0.42, burst: 3.6, hidden: true }, cross: { key: "KeyQ", label: "Cross", dur: 0.34, burst: 4.6 }, behind: { key: "KeyX", label: "Behind", dur: 0.5, burst: 4.0 },
+const MOVES = { swap: { key: "", label: "", dur: 0.28, burst: 0, hidden: true }, hop: { key: "", label: "", dur: 0.42, burst: 3.6, hidden: true }, cross: { key: "KeyQ", label: "Cross", dur: 0.34, burst: 4.6 }, behind: { key: "KeyX", label: "Behind", dur: 0.5, burst: 0 },
   spin: { key: "KeyF", label: "Spin", dur: 0.5, burst: 4.8 }, stepback: { key: "KeyC", label: "Step back", dur: 0.36, burst: 4.4 } };
 
 // hand high/low points in the Mixamo dribble clip (seconds), measured from the animation
@@ -167,7 +167,8 @@ export function start(root, opts) {
   }
   function turnover(to, why) { msg(toText(to, why), 900); NET?.send({ to: [to, why] }); pause = 0.9; setTimeout(() => !over && setupPossession(to), 800); }
   function doMove(pl, kind) {
-    if (!pl.hasBall || pl.shooting || pl.y > 0 || pl.move || (pl.moveCool || 0) > t) return;
+    if (!pl.hasBall || pl.shooting || pl.y > 0 || (pl.move && pl.move.kind !== "swap") || (pl.moveCool || 0) > t) return;
+    if (pl.move?.kind === "swap") pl.move = null;
     const M = MOVES[kind], fwd = fwdOf(pl), side = new THREE.Vector3(fwd.z, 0, -fwd.x);
     let dir;
     if (kind === "cross") { pl.hand = 1 - pl.hand; dir = side.clone().multiplyScalar(pl.hand ? -1 : 1).addScaledVector(fwd, 0.35); }
@@ -190,8 +191,21 @@ export function start(root, opts) {
     let sp = (pl.hasBall ? SPEED * 0.9 : SPEED) * (ground ? 1 : 0.3) * (pl.burst > t ? 1.3 : 1);
     if (pl.stumble > t) sp *= 0.08;
     if (pl.shooting && ground) sp *= 0.2;
-    if (pl.move) { const k = (t - pl.move.t0) / pl.move.dur; if (k >= 1) pl.move = null; else { pl.vel.copy(pl.move.dir).multiplyScalar(MOVES[pl.move.kind].burst * (1 - k * 0.5)); } }
-    if (!pl.move) pl.vel.lerp(want.multiplyScalar(sp), ground ? 0.25 : 0.05);
+    let steer = !pl.move;
+    if (pl.move) {
+      const k = (t - pl.move.t0) / pl.move.dur, kind = pl.move.kind;
+      if (k >= 1) { pl.move = null; steer = true; }
+      else if (kind === "behind") { if (k < 0.55) pl.vel.multiplyScalar(0.75); else steer = true; } // plant for the wrap, then run out of it
+      else if (kind === "swap") steer = true; // hand switch on the move: keep going
+      else pl.vel.copy(pl.move.dir).multiplyScalar(MOVES[kind].burst * (1 - k * 0.5));
+    }
+    if (steer) pl.vel.lerp(want.clone().multiplyScalar(sp), ground ? 0.25 : 0.05);
+    // dribbling left with the ball in the right hand (or right with the left): switch hands in front
+    if (pl.hasBall && !pl.move && !pl.shooting && ground && !(pl.swapCool > t)) {
+      const f = flat(RIM).sub(flat(pl.pos)).normalize(), lateral = pl.vel.x * f.z - pl.vel.z * f.x; // + = toward your left
+      const wantHand = lateral > 2.2 ? 0 : lateral < -2.2 ? 1 : pl.hand;
+      if (wantHand !== pl.hand) { pl.move = { kind: "swap", t0: t, dur: MOVES.swap.dur, dir: new THREE.Vector3(), from: pl.hand }; pl.hand = wantHand; pl.swapCool = t + 0.6; }
+    }
     pl.pos.addScaledVector(pl.vel, dt);
     pl.pos.x = Math.max(-COURT_X, Math.min(COURT_X, pl.pos.x)); pl.pos.z = Math.max(-1.2, Math.min(COURT_Z, pl.pos.z));
     const press = shootDown && !shootWas, rel = !shootDown && shootWas;
@@ -236,7 +250,7 @@ export function start(root, opts) {
     if (ball.holder) {
       const pl = ball.holder; pl.group.updateMatrixWorld(true);
       if (pl.shooting || pl.dunking || pl.y > 0) { ball.p.copy(pl.dunking ? (pl.handR.getWorldPosition(tmp), tmp.add(new THREE.Vector3(0, .1, 0))) : handsMid(pl)); return; }
-      if (pl.move && (pl.move.kind === "cross" || pl.move.kind === "behind")) {
+      if (pl.move && (pl.move.kind === "cross" || pl.move.kind === "behind" || pl.move.kind === "swap")) {
         const k = Math.min(1, (t - pl.move.t0) / pl.move.dur), a = pl.hands[pl.move.from], b = pl.hands[1 - pl.move.from];
         a.getWorldPosition(tmp); b.getWorldPosition(tmp2);
         ball.p.lerpVectors(tmp, tmp2, k); ball.p.y = 0.15 + (Math.max(tmp.y, tmp2.y) - 0.15) * Math.abs(Math.cos(Math.PI * k));
