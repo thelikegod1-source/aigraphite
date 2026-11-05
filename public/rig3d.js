@@ -115,7 +115,10 @@ export function updateRig(p, t, dt, other) {
   let dip = def ? 0.07 : 0, leanF = def ? 0.22 : p.hasBall ? 0.1 + speed * 0.15 : speed * 0.15, leanS = 0, twist = 0;
   if (mv?.kind === "behind") { // from a recording: sit low and wide, hips turn to the ball side
     const sFrom = mv.from === 1 ? -1 : 1; dip = 0.13 * Math.min(1, arc * 1.6); leanF += 0.18 * arc; twist = sFrom * 0.55 * arc;
-  } else if (mv?.kind === "cross") { const sgn = p.hand ? -1 : 1; dip = 0.1 * arc; leanF += 0.25 * arc; leanS = sgn * 0.35 * arc; twist = sgn * 0.4 * arc; }
+  } else if (mv?.kind === "cross") { // escape: deep plant, hips and shoulders sway from the ball side to the new side
+    const sFrom = mv.from === 1 ? -1 : 1, sw = mk * mk * (3 - 2 * mk);
+    dip = 0.14 * Math.sin(Math.PI * Math.min(1, mk * 1.2)); leanF += 0.2 * arc; twist = sFrom * 0.35 * (1 - 2 * sw); leanS = sFrom * 0.28 * (1 - 2 * sw);
+  } else if (false) { const sgn = p.hand ? -1 : 1; dip = 0.1 * arc; leanF += 0.25 * arc; leanS = sgn * 0.35 * arc; twist = sgn * 0.4 * arc; }
   else if (mv?.kind === "spin") { dip = 0.1; leanF = 0.12; }
   else if (mv?.kind === "stepback" || mv?.kind === "hop") { leanF = -0.35 * arc; dip = -0.08 * arc; }
   // bank into turns while moving
@@ -156,9 +159,12 @@ export function updateRig(p, t, dt, other) {
   // the other arm reaches out wide and low to take it, then both settle
   if (mv?.kind === "behind") {
     const sFrom = mv.from === 1 ? -1 : 1, k = mk;
-    const wrap = Math.min(1, k / 0.45), catchK = Math.max(0, Math.min(1, (k - 0.3) / 0.35)), out = Math.max(0, (k - 0.8) / 0.2);
+    const sm = x => x * x * (3 - 2 * x), pull = sm(Math.min(1, k / 0.3)), wrap = sm(Math.max(0, Math.min(1, (k - 0.22) / 0.4)));
+    const catchK = sm(Math.max(0, Math.min(1, (k - 0.4) / 0.35))), out = sm(Math.max(0, (k - 0.82) / 0.18));
     aimArms(m, p.group, side => side === sFrom
-      ? [mixV(V(side * 0.35, -0.85, 0.35), V(side * 0.25, -0.85, -0.55), wrap), mixV(V(side * 0.1, -0.6, 0.8), V(-side * 0.95, -0.25, -0.3), wrap)]
+      // pull it out wide to the side first, then wrap it behind
+      ? [mixV(mixV(V(side * 0.35, -0.85, 0.35), V(side * 0.75, -0.6, 0.1), pull), V(side * 0.25, -0.85, -0.55), wrap),
+         mixV(mixV(V(side * 0.1, -0.6, 0.8), V(side * 0.6, -0.7, 0.2), pull), V(-side * 0.95, -0.25, -0.3), wrap)]
       : [mixV(V(side * 0.4, -0.8, 0.3), V(side * 0.9, -0.45, 0.15), catchK), mixV(V(side * 0.2, -0.3, 0.9), V(side * 0.55, -0.55, 0.45), catchK)],
       Math.min(1, arc * 2.2) * (1 - out));
   }

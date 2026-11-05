@@ -6,8 +6,8 @@ import * as THREE from "./vendor/three.module.min.js";
 const RIM = new THREE.Vector3(0, 3.05, 0), RIM_R = 0.23, BALL_R = 0.12, BOARD_Z = -0.38;
 const ARC = 6.75, GRAV = 9.8, TO_WIN = 15, COURT_X = 7.5, COURT_Z = 13.5;
 const SPEED = 5.2, JUMP_V = 6.0, METER_TIME = 0.56, GREEN_C = 0.86;
-const MOVES = { swap: { key: "", label: "", dur: 0.28, burst: 0, hidden: true }, hop: { key: "", label: "", dur: 0.42, burst: 3.6, hidden: true }, cross: { key: "KeyQ", label: "Cross", dur: 0.34, burst: 4.6 }, behind: { key: "KeyX", label: "Behind", dur: 0.5, burst: 0 },
-  spin: { key: "KeyF", label: "Spin", dur: 0.5, burst: 4.8 }, stepback: { key: "KeyC", label: "Step back", dur: 0.36, burst: 4.4 } };
+const MOVES = { swap: { key: "", label: "", dur: 0.4, burst: 0, hidden: true }, hop: { key: "", label: "", dur: 0.42, burst: 3.6, hidden: true }, cross: { key: "KeyQ", label: "Cross", dur: 0.58, burst: 5.0 }, behind: { key: "KeyX", label: "Behind", dur: 0.78, burst: 0 },
+  spin: { key: "KeyF", label: "Spin", dur: 0.65, burst: 4.2 }, stepback: { key: "KeyC", label: "Step back", dur: 0.48, burst: 4.0 } };
 
 // hand high/low points in the Mixamo dribble clip (seconds), measured from the animation
 const DRIB = { dur: 2.0833, max: [0, 0.71, 1.42, 2.0833], min: [0.33, 1.07, 1.77] };
@@ -27,9 +27,10 @@ export function start(root, opts) {
       <div class="h3-fb" id="hfb"></div>
       <div class="h3-stick" id="hstick"><i id="hknob"></i></div>
       <div class="h3-moves" id="hmoves">${Object.entries(MOVES).filter(([, m]) => !m.hidden).map(([k, m]) => `<button class="h3-mv" data-mv="${k}" aria-label="${m.label}">${m.label}<small>${m.key.slice(3)}</small></button>`).join("")}</div>
-      <button class="h3-shoot" id="hshoot" aria-label="Shoot, block or steal"><span id="hlbl">Shoot</span><small>E</small></button>
+      <button class="h3-steal off" id="hsteal" aria-label="Steal">Steal<small>F</small></button>
+      <button class="h3-shoot" id="hshoot" aria-label="Shoot or block"><span id="hlbl">Shoot</span><small>E</small></button>
     </div>
-    <p class="small hp-help">Move: joystick or WASD · Shoot: hold E (or the button), let go in the <b style="color:var(--win)">green</b> · Moves: Q cross · X behind the back · F spin · C step back · On defense E blocks or steals</p>
+    <p class="small hp-help">Move: joystick or WASD · Shoot: hold E (or the button), let go in the <b style="color:var(--win)">green</b> · Moves: Q cross · X behind the back · F spin · C step back · On defense: E blocks · F steals</p>
     <div class="btns"><button class="ghost" id="hquit">Quit</button></div></div>`;
   const wrap = root.querySelector("#h3wrap");
 
@@ -85,6 +86,7 @@ export function start(root, opts) {
   function posUI(team) {
     root.querySelector("#hlbl").textContent = team === ME ? "Shoot" : "Block";
     root.querySelector("#hmoves").classList.toggle("off", team !== ME);
+    root.querySelector("#hsteal").classList.toggle("off", team === ME);
   }
   // messages for one player: shown here if it's us, sent over if it's the online opponent
   function apply(ev) {
@@ -111,11 +113,13 @@ export function start(root, opts) {
   const btn = root.querySelector("#hshoot");
   btn.addEventListener("pointerdown", e => { e.preventDefault(); btn.setPointerCapture?.(e.pointerId); input.shoot = true; });
   ["pointerup", "pointercancel", "lostpointercapture"].forEach(ev => btn.addEventListener(ev, () => { input.shoot = false; }));
+  root.querySelector("#hsteal").addEventListener("pointerdown", e => { e.preventDefault(); input.steal = true; });
   root.querySelectorAll("[data-mv]").forEach(b => b.addEventListener("pointerdown", e => { e.preventDefault(); input.move = b.dataset.mv; }));
   const keys = {}; const onKey = e => {
     const down = e.type === "keydown";
     if (["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code)) { keys[e.code] = down; e.preventDefault(); }
     if (e.code === "KeyE" || e.code === "Space") { input.shoot = down; e.preventDefault(); }
+    if (down && !e.repeat && e.code === "KeyF" && offense !== ME) { input.steal = true; e.preventDefault(); return; } // F on defense: steal
     if (down && !e.repeat) for (const [k, m] of Object.entries(MOVES)) if (e.code === m.key) { input.move = k; e.preventDefault(); }
   };
   addEventListener("keydown", onKey); addEventListener("keyup", onKey);
@@ -183,6 +187,19 @@ export function start(root, opts) {
   }
 
   // ---------- simulation ----------
+  // F / Steal button on defense: reach for the ball. Best when you poke at the ball side while it's low in the dribble.
+  function reach(pl) {
+    const o = players[1 - pl.team];
+    if (pl.hasBall || pl.y > 0.01 || (pl.reachT && t - pl.reachT < 0.55) || pl.stumble > t) return;
+    pl.reachT = t;
+    if (o.hasBall && !o.shooting && !o.dunking && flat(o.pos).distanceTo(flat(pl.pos)) < 1.4) {
+      const side = flat(ball.p).sub(flat(o.pos)), toMe = flat(pl.pos).sub(flat(o.pos)).normalize();
+      const ballSide = side.lengthSq() > 0.001 && side.normalize().dot(toMe) > 0.1, low = ball.p.y < 0.8;
+      const chance = (ballSide ? 0.38 : 0.12) + (low ? 0.14 : 0) - (o.move ? 0.1 : 0);
+      if (Math.random() < chance) { o.hasBall = false; pl.hasBall = true; pl.hand = 1; ball.holder = pl; tone(600, .07, "square", .06); turnover(pl.team, "STOLEN!"); }
+      else { o.burst = t + 0.6; say(o.team, { m: ["BLOW BY", 700] }); } // missed reach: they get a step
+    }
+  }
   // stick (camera-relative) → direction on the court
   function camToWorld(x, z) { const fwd = flat(RIM.clone().sub(camera.position)).normalize(), right = new THREE.Vector3(-fwd.z, 0, fwd.x); return fwd.multiplyScalar(-z).add(right.multiplyScalar(x)); }
   function stepPlayer(pl, dt, moveX, moveZ, shootDown, shootWas, world) {
@@ -197,6 +214,10 @@ export function start(root, opts) {
       if (k >= 1) { pl.move = null; steer = true; }
       else if (kind === "behind") { if (k < 0.55) pl.vel.multiplyScalar(0.75); else steer = true; } // plant for the wrap, then run out of it
       else if (kind === "swap") steer = true; // hand switch on the move: keep going
+      else if (kind === "cross") { // escape: plant low while the ball sweeps across, then explode out the other way
+        if (k < 0.45) pl.vel.multiplyScalar(0.8);
+        else pl.vel.copy(pl.move.dir).multiplyScalar(MOVES.cross.burst * Math.sin(Math.PI * Math.min(1, (k - 0.45) / 0.55 * 0.5 + 0.5)) );
+      }
       else pl.vel.copy(pl.move.dir).multiplyScalar(MOVES[kind].burst * (1 - k * 0.5));
     }
     if (steer) pl.vel.lerp(want.clone().multiplyScalar(sp), ground ? 0.25 : 0.05);
@@ -217,15 +238,7 @@ export function start(root, opts) {
         tone(300, .05, "triangle", .07); say(pl.team, { m: ["HOP BACK", 600] });
       } else if (pl.hasBall && distToRim(pl.pos) < 1.9) { pl.dunkStyle = Math.random() * 4 | 0; pl.vy = JUMP_V * 1.15; pl.dunking = true; pl.shooting = true; pl.meter = 0; pl.shotT = t; }
       else if (pl.hasBall) { pl.shooting = true; pl.meter = 0; pl.shotT = t; pl.move = null; pl.jumpAt = t + 0.07; } // gather, then rise
-      else if (o.hasBall && !o.shooting && !o.dunking && flat(o.pos).distanceTo(flat(pl.pos)) < 1.3) {
-        // reach: best when you poke at the ball side while it's low in the dribble
-        pl.reachT = t;
-        const side = flat(ball.p).sub(flat(o.pos)), toMe = flat(pl.pos).sub(flat(o.pos)).normalize();
-        const ballSide = side.lengthSq() > 0.001 && side.normalize().dot(toMe) > 0.1, low = ball.p.y < 0.6;
-        const chance = (ballSide ? 0.32 : 0.08) + (low ? 0.14 : 0) - (o.move ? 0.1 : 0);
-        if (Math.random() < chance) { o.hasBall = false; pl.hasBall = true; pl.hand = 1; ball.holder = pl; tone(600, .07, "square", .06); turnover(pl.team, "STOLEN!"); }
-        else { o.burst = t + 0.6; say(o.team, { m: ["BLOW BY", 700] }); } // missed reach: they get a step
-      } else { pl.vy = JUMP_V * 0.9; pl.blockT = t; }
+      else { pl.vy = JUMP_V * 0.9; pl.blockT = t; } // E on defense: jump / block
     }
     if (pl.jumpAt && t >= pl.jumpAt) { pl.vy = JUMP_V; pl.jumpAt = 0; }
     if (pl.hang > t) { pl.y = RIM.y - 2.15; pl.vy = 0; pl.vel.set(0, 0, 0); pl.pos.x += (RIM.x - pl.pos.x) * 0.3; pl.pos.z += (RIM.z + 0.42 - pl.pos.z) * 0.3; }
@@ -251,10 +264,15 @@ export function start(root, opts) {
       const pl = ball.holder; pl.group.updateMatrixWorld(true);
       if (pl.shooting || pl.dunking || pl.y > 0) { ball.p.copy(pl.dunking ? (pl.handR.getWorldPosition(tmp), tmp.add(new THREE.Vector3(0, .1, 0))) : handsMid(pl)); return; }
       if (pl.move && (pl.move.kind === "cross" || pl.move.kind === "behind" || pl.move.kind === "swap")) {
-        const k = Math.min(1, (t - pl.move.t0) / pl.move.dur), a = pl.hands[pl.move.from], b = pl.hands[1 - pl.move.from];
+        const k = Math.min(1, (t - pl.move.t0) / pl.move.dur), a = pl.hands[pl.move.from], b = pl.hands[1 - pl.move.from], kind = pl.move.kind;
         a.getWorldPosition(tmp); b.getWorldPosition(tmp2);
-        ball.p.lerpVectors(tmp, tmp2, k); ball.p.y = 0.15 + (Math.max(tmp.y, tmp2.y) - 0.15) * Math.abs(Math.cos(Math.PI * k));
-        if (pl.move.kind === "behind") ball.p.addScaledVector(fwdOf(pl), -0.45 * Math.sin(Math.PI * k));
+        // behind the back: pull the ball out wide first (first ~third), then wrap it; everything eased
+        const pull = kind === "behind" ? Math.min(1, k / 0.32) : 0, kk = kind === "behind" ? Math.max(0, (k - 0.25) / 0.75) : k;
+        const e = kk * kk * (3 - 2 * kk);
+        ball.p.lerpVectors(tmp, tmp2, e); ball.p.y = 0.15 + (Math.min(0.78, Math.min(tmp.y, tmp2.y)) - 0.15) * Math.abs(Math.cos(Math.PI * e)); // stays low through the move
+        const f = fwdOf(pl), out = new THREE.Vector3(f.z, 0, -f.x).multiplyScalar(pl.move.from === 1 ? -1 : 1); // toward the ball side
+        if (kind === "behind") { ball.p.addScaledVector(out, 0.35 * Math.sin(Math.PI * Math.min(1, pull * 0.5 + e * 0.5))); ball.p.addScaledVector(f, -0.5 * Math.sin(Math.PI * e)); }
+        if (kind === "cross") { ball.p.addScaledVector(out, 0.32 * Math.sin(Math.PI * Math.min(1, k * 1.6)) * (1 - e)); ball.p.addScaledVector(f, 0.15 * Math.sin(Math.PI * e)); } // pull it wide, then a big low sweep in front
         return;
       }
       pl.hands[pl.hand].getWorldPosition(tmp);
@@ -341,7 +359,7 @@ export function start(root, opts) {
       [mx, mz] = toV(you.pos.clone().addScaledVector(toHoop, 0.95));
       const gap = flat(you.pos).distanceTo(flat(me.pos));
       if (you.shooting && gap < 2 && me.y === 0 && t > ai.jumpCool) { shoot = true; ai.jumpCool = t + 1.2; ai.holdUntil = t + 0.2; }
-      else if (!you.shooting && gap < 1.0 && me.y === 0 && t > ai.jumpCool && Math.random() < dt * 0.9) { shoot = true; ai.jumpCool = t + 1.5; ai.holdUntil = t + 0.12; }
+      else if (!you.shooting && gap < 1.1 && me.y === 0 && t > ai.jumpCool && Math.random() < dt * 0.9) { reach(me); ai.jumpCool = t + 1.5; }
       shoot = shoot || t < ai.holdUntil;
     }
     return [mx * 0.85, mz * 0.85, shoot];
@@ -359,6 +377,7 @@ export function start(root, opts) {
       if (GUEST) guestStep(dt, input.x || kx, input.z || kz);
       else if (pause <= 0) {
         if (input.move) { doMove(players[0], input.move); input.move = null; }
+        if (input.steal) { reach(players[0]); input.steal = false; }
         stepPlayer(players[0], dt, input.x || kx, input.z || kz, input.shoot, input.wasShoot);
         if (NET) { stepPlayer(players[1], dt, remote.x, remote.z, remote.s, remote.was, true); remote.was = remote.s; }
         else { const [ax, az, as] = aiStep(dt, players[1], players[0]); stepPlayer(players[1], dt, ax, az, as, aiPrev.shoot); aiPrev.shoot = as; }
@@ -371,7 +390,7 @@ export function start(root, opts) {
           d.divideScalar(l).multiplyScalar(0.75 - l); a.pos.addScaledVector(d, share); b.pos.addScaledVector(d, -(1 - share));
           if (walled && !off.move) off.vel.multiplyScalar(0.6);
         }
-      } else { input.move = null; if (!GUEST) for (const pl of players) stepPlayer(pl, dt, 0, 0, false, false); } // still fall / hang during the pause
+      } else { input.move = null; input.steal = false; if (!GUEST) for (const pl of players) stepPlayer(pl, dt, 0, 0, false, false); } // still fall / hang during the pause
       input.wasShoot = input.shoot;
       for (const p of players) { animatePlayer(p, t, dt, players[1 - p.team]); p.lookT = p.shooting || p.dunking ? RIM : p.hasBall ? players[1 - p.team].head.getWorldPosition(p.lookV ||= new THREE.Vector3()).setY(1.7) : ball.p; rig?.updateRig(p, t, dt, players[1 - p.team]); }
       if (!GUEST || ball.holder) stepBall(dt); else guestBall();
@@ -468,6 +487,7 @@ export function start(root, opts) {
     gSendAcc += dt;
     if (gSendAcc > 0.03 || input.shoot !== gWas) { gSendAcc = 0; NET.send({ in: [+w.x.toFixed(3), +w.z.toFixed(3), input.shoot ? 1 : 0, ++gSeq] }, true); }
     if (input.move) { NET.send({ mv: input.move }); input.move = null; }
+    if (input.steal) { NET.send({ stl: 1 }); input.steal = false; }
     // our own shot meter runs here so lag can't spoil the timing
     if (input.shoot && !gWas && mine.hasBall && mine.y <= 0.01) gShootT = t;
     gMeter = gShootT ? Math.max(0.001, (t - gShootT) / METER_TIME) : 0;
@@ -506,6 +526,7 @@ export function start(root, opts) {
       }
       if (d.rel != null) { remote.relMeter = d.rel; remote.s = false; remote.relSeq = d.q; return; }
       if (d.mv && !GUEST && pause <= 0) { doMove(players[1], d.mv); return; }
+      if (d.stl && !GUEST && pause <= 0) { reach(players[1]); return; }
       if (d.sc) { score = [d.sc[3], d.sc[4]]; showScore(d.sc[0], d.sc[1], d.sc[2]); return; }
       if (d.to) { msg(toText(d.to[0], d.to[1]), 900); return; }
       if (d.end != null) { finish(d.end); return; }
