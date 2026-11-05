@@ -441,7 +441,7 @@ export function start(root, opts) {
   // pulls in when you shoot, shakes on dunks
   const cam = { yaw: 0, dist: 6.4, look: new THREE.Vector3(0, 1.5, 4), shake: 0 };
   function updateCamera(dt, me) {
-    const ov = opts.debug && window.__h3?.cam; if (ov) { camera.position.set(me.pos.x + ov[0], ov[1], me.pos.z + ov[2]); camera.lookAt(me.pos.x, me.y + 1.3, me.pos.z); return; }
+    const ov = opts.debug && window.__h3?.cam; if (ov) { camera.position.set(me.pos.x + ov[0], ov[1], me.pos.z + ov[2]); camera.lookAt(me.pos.x, me.y + 0.95, me.pos.z); return; }
     const focus = ball.holder ? ball.holder.pos : ball.p, mid = flat(me.pos).lerp(flat(focus), 0.4);
     const out = flat(mid).sub(flat(RIM));
     if (out.length() > 1.6) { const want = Math.max(-1.0, Math.min(1.0, Math.atan2(out.x, out.z))); cam.yaw += Math.atan2(Math.sin(want - cam.yaw), Math.cos(want - cam.yaw)) * (1 - Math.exp(-dt * 2.2)); }

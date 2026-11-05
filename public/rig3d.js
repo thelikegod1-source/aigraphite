@@ -35,9 +35,15 @@ export function attachRig(p, rig, colors) {
   const root = cloneSkinned(rig.scene);
   const box = new THREE.Box3().setFromObject(root), h = box.max.y - box.min.y || 1, s = HEIGHT / h;
   root.scale.setScalar(s); root.position.y = -box.min.y * s; const baseY = root.position.y;
-  const body = new THREE.MeshStandardMaterial({ color: colors.jersey, roughness: 0.55, metalness: 0.1 });
-  const joints = new THREE.MeshStandardMaterial({ color: colors.trim === 0xffffff ? 0xe9edf5 : 0x1b1b1f, roughness: 0.4, metalness: 0.3 });
-  root.traverse(o => { if (o.isMesh) { o.material = /Joint/i.test(o.name) ? joints : body; o.castShadow = true; o.frustumCulled = false; } });
+  // "clothes": paint each vertex by the bone that moves it (jersey, shorts, skin, socks, shoes, hair)
+  const body = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62, metalness: 0.02 });
+  const joints = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.05 });
+  root.traverse(o => {
+    if (!o.isMesh) return;
+    const j = /Joint/i.test(o.name);
+    o.geometry = o.geometry.clone(); paintKit(o, colors, j);
+    o.material = j ? joints : body; o.castShadow = true; o.frustumCulled = false;
+  });
   const bone = n => root.getObjectByName("mixamorig:" + n) || root.getObjectByName("mixamorig" + n);
   const b = { pL: bone("LeftHandMiddle1") || bone("LeftHand"), pR: bone("RightHandMiddle1") || bone("RightHand"), L: bone("LeftHand"), R: bone("RightHand"), armL: bone("LeftArm"), armR: bone("RightArm"),
     foreL: bone("LeftForeArm"), foreR: bone("RightForeArm"), spine: bone("Spine1"), head: bone("Head"), neck: bone("Neck"),
@@ -54,6 +60,40 @@ export function attachRig(p, rig, colors) {
   return true;
 }
 
+function paintKit(mesh, c, isJoint) {
+  const g = mesh.geometry, si = g.attributes.skinIndex, sw = g.attributes.skinWeight, pos = g.attributes.position, nrm = g.attributes.normal;
+  if (!si || !mesh.skeleton) return;
+  const names = mesh.skeleton.bones.map(b => b.name.replace(/^mixamorig:?/, ""));
+  const col = h => new THREE.Color(h).convertSRGBToLinear();
+  const C = { jersey: col(c.jersey), trim: col(c.trim), shorts: col(c.shorts), skin: col(c.skin), hair: col(c.hair), sock: col(0xf2f2f2), shoe: col(c.trim === 0xffffff ? 0xf5f5f5 : 0x1a1a1a), sole: col(0xdddddd) };
+  const n = pos.count, out = new Float32Array(n * 3), dom = new Array(n);
+  // dominant bone per vertex, plus height range per bone group (bind pose)
+  const range = {};
+  for (let i = 0; i < n; i++) {
+    const ws = [sw.getX(i), sw.getY(i), sw.getZ(i), sw.getW(i)], is = [si.getX(i), si.getY(i), si.getZ(i), si.getW(i)];
+    let best = 0, bw = -1; for (let k = 0; k < 4; k++) if (ws[k] > bw) { bw = ws[k]; best = is[k]; }
+    const nm = names[best] || ""; dom[i] = nm; const y = pos.getY(i);
+    const r = range[nm] ||= [Infinity, -Infinity]; r[0] = Math.min(r[0], y); r[1] = Math.max(r[1], y);
+  }
+  let y0 = Infinity, y1 = -Infinity; for (let i = 0; i < n; i++) { const y = pos.getY(i); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+  for (let i = 0; i < n; i++) {
+    const nm = dom[i], y = pos.getY(i), r = range[nm], f = r ? (y - r[0]) / ((r[1] - r[0]) || 1) : 0, gf = (y - y0) / ((y1 - y0) || 1);
+    let k;
+    if (gf > 0.875) k = gf > 0.975 || (gf > 0.945 && nrm && nrm.getZ(i) < -0.35) ? "hair" : "skin"; // head, by height
+    else if (/Head|Neck|Eye/.test(nm)) k = /HeadTop|Head$/.test(nm) && (f > 0.72 || (f > 0.5 && nrm && nrm.getZ(i) < 0.15)) ? "hair" : "skin";
+    else if (/Hand|Thumb|Index|Middle|Ring|Pinky|ForeArm/.test(nm)) k = "skin";
+    else if (/Arm$/.test(nm)) k = f > 0.82 ? "jersey" : "skin"; // sleeveless jersey, a little at the shoulder
+    else if (/Shoulder|Spine/.test(nm)) k = "jersey";
+    else if (/Hips/.test(nm)) k = f > 0.7 ? "jersey" : "shorts";
+    else if (/UpLeg/.test(nm)) k = f > 0.25 ? "shorts" : "skin";
+    else if (/Leg$/.test(nm)) k = f < 0.28 ? "sock" : "skin";
+    else if (/Foot|Toe/.test(nm)) k = f < 0.18 ? "sole" : "shoe";
+    else k = "jersey";
+    const cc = C[k], d = isJoint && k !== "skin" && k !== "hair" ? 0.8 : 1; // seams a touch darker on clothes
+    out[i * 3] = cc.r * d; out[i * 3 + 1] = cc.g * d; out[i * 3 + 2] = cc.b * d;
+  }
+  g.setAttribute("color", new THREE.BufferAttribute(out, 3));
+}
 const qa = new THREE.Quaternion(), qp = new THREE.Quaternion(), ax = new THREE.Vector3();
 // All bone posing happens in the model's own space (under its root), where the left-hand
 // mirror is just a flipped x. Player-space directions/axes are converted into it, so
