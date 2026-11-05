@@ -168,8 +168,8 @@ function addGear(mesh, info, c, root, team) {
   const head = bone("Head"), top = bone("HeadTop_End");
   if (head && top) {
     const h0 = wp("Head"), h1 = wp("HeadTop_End"), ctr = h0.clone().lerp(h1, 0.55);
-    let r = 0; for (let i = 0; i < pos.count; i++) if (cats[i] === "skin" || cats[i] === "hair") { const v = toWorld(i); if (v.y > h0.y) r = Math.max(r, Math.hypot(v.x - ctr.x, v.z - ctr.z)); }
-    r = Math.max(r, 0.08 * root.scale.x);
+    let r = 0; for (let i = 0; i < pos.count; i++) if (cats[i] === "skin" || cats[i] === "hair") { const v = toWorld(i); if (v.y > ctr.y && v.y < h1.y) r = Math.max(r, Math.abs(v.x - ctr.x)); } // skull width above the ears
+    r = Math.min(Math.max(r, 0.07 * root.scale.x), 0.1 * root.scale.x);
     const hairTex = canvasTex(128, 128, (x, w, h) => { x.fillStyle = hex(c.hair); x.fillRect(0, 0, w, h); for (let i = 0; i < 900; i++) { x.fillStyle = `rgba(${Math.random() < .5 ? "255,255,255" : "0,0,0"},${Math.random() * .12})`; x.beginPath(); x.arc(Math.random() * w, Math.random() * h, 1.5 + Math.random() * 2, 0, 7); x.fill(); } });
     const cap = new THREE.Mesh(new THREE.SphereGeometry(r * 1.06, 28, 18, 0, Math.PI * 2, 0, Math.PI * 0.5), new THREE.MeshStandardMaterial({ map: hairTex, roughness: 0.95 }));
     cap.scale.set(1, 1.05, 1.08); cap.position.copy(ctr).add(new THREE.Vector3(0, -0.005, -0.008)); cap.castShadow = true;

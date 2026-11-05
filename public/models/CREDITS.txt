@@ -1,0 +1,2 @@
+Player body: "Male Base Mesh" by orange-juice-games (CC0), via github.com/BoQsc/Godot-Male-Base-Mesh.
+Smoothed, sculpted (muscles, face) and rigged in-house with tools/autorig.mjs.

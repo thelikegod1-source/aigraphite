@@ -1,4 +1,4 @@
-// Usage (from a folder with xbot.glb, and npm i three@0.160.0 three-subdivide@1.1.5 @gltf-transform/core @gltf-transform/functions):
+// Usage: node autorig.mjs <mesh.glb> <mesh node> <out.glb> [smoothing=2] [flip]  (needs xbot.glb, three@0.160.0, three-subdivide, @gltf-transform/*)
 //   node autorig.mjs <mesh.glb> <mesh node name> <out.glb> [smoothing steps=2]
 // Convert an FBX first with fbx2gltf. Output replaces public/models/player.glb.
 // Auto-rig a static humanoid mesh onto the X Bot skeleton (same bones the game's animations drive).
@@ -9,7 +9,7 @@ import { NodeIO, Document } from '@gltf-transform/core';
 import * as THREE from 'three';
 import { LoopSubdivision } from 'three-subdivide';
 
-const [, , meshFile, meshNodeName, outFile, iters = '2'] = process.argv;
+const [, , meshFile, meshNodeName, outFile, iters = '2', flip = ''] = process.argv; // flip: 'flip' if the mesh faces -z
 const io = new NodeIO();
 
 // ---- skeleton from the X Bot
@@ -46,6 +46,7 @@ let geo = new THREE.BufferGeometry();
 geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(prim.getAttribute('POSITION').getArray()), 3));
 if (prim.getIndices()) geo.setIndex(Array.from(prim.getIndices().getArray()));
 geo.applyMatrix4(new THREE.Matrix4().fromArray(mnode.getWorldMatrix()));
+if (flip === 'flip') geo.rotateY(Math.PI);
 geo = geo.toNonIndexed ? geo : geo;
 geo.deleteAttribute('normal'); geo.deleteAttribute('uv');
 geo = LoopSubdivision.modify(geo, +iters, { split: false, uvSmooth: false, preserveEdges: false, flatOnly: false, maxTriangles: 60000 });
@@ -63,6 +64,60 @@ geo.computeBoundingBox();
 // center depth on the hips
 { const pos = geo.attributes.position; let zs = 0, c = 0; for (let i = 0; i < pos.count; i++) { const y = pos.getY(i); if (Math.abs(y - hips.y) < 0.15) { zs += pos.getZ(i); c++; } } geo.translate(hips.x, 0, hips.z - zs / c); }
 
+// ---- sculpt: muscles and a face, as smooth bumps along the surface normal (bind pose)
+{
+  geo.computeVertexNormals();
+  const ps = geo.attributes.position, nr = geo.attributes.normal, N = ps.count;
+  const head = wp('Head'), crown = wp('HeadTop_End'), H = crown.y - head.y;
+  let fz = -1e9, sideX = 0; for (let i = 0; i < N; i++) { const y = ps.getY(i); if (y > head.y + 0.25 * H && y < crown.y && Math.abs(ps.getX(i)) < 0.05) fz = Math.max(fz, ps.getZ(i)); if (Math.abs(y - (head.y + 0.45 * H)) < 0.02) sideX = Math.max(sideX, Math.abs(ps.getX(i))); }
+  const hy = t => head.y + t * H;
+  // [x, y, z|null, sx, sy, sz, amp, facing: 'front'|'back'|'side'|null]
+  const F = [];
+  const face = (x, t, sx, sy, amp) => F.push([x, hy(t), fz, sx, sy, 0.05, amp, 'front']);
+  face(0, 0.40, 0.011, 0.04, 0.021); face(0, 0.33, 0.012, 0.012, 0.011);           // nose bridge + tip
+  face(0.016, 0.33, 0.008, 0.008, 0.004); face(-0.016, 0.33, 0.008, 0.008, 0.004); // nostril wings
+  face(0, 0.6, 0.055, 0.012, 0.009);                                               // brow ridge
+  face(0.032, 0.52, 0.016, 0.012, -0.012); face(-0.032, 0.52, 0.016, 0.012, -0.012); // eye sockets
+  face(0.047, 0.42, 0.02, 0.02, 0.005); face(-0.047, 0.42, 0.02, 0.02, 0.005);       // cheekbones
+  face(0, 0.265, 0.022, 0.008, 0.007); face(0, 0.215, 0.02, 0.008, 0.008);           // lips
+  face(0, 0.24, 0.024, 0.003, -0.003);                                               // mouth line
+  face(0, 0.12, 0.022, 0.016, 0.011); face(0.05, 0.2, 0.02, 0.03, 0.006); face(-0.05, 0.2, 0.02, 0.03, 0.006); // chin + jaw                                                // chin
+  for (const sx of [1, -1]) F.push([sx * sideX, hy(0.45), null, 0.016, 0.024, 0.016, 0.009, 'side']); // ears
+  const sp2 = wp('Spine2'), sp1 = wp('Spine1'), nk = wp('Neck');
+  for (const sx of [1, -1]) {
+    F.push([sx * 0.085, sp2.y + 0.03, null, 0.07, 0.05, 0.08, 0.018, 'front']);       // pecs
+    F.push([sx * 0.06, nk.y - 0.02, null, 0.05, 0.04, 0.08, 0.012, 'back']);          // traps
+    F.push([sx * 0.11, sp1.y + 0.02, null, 0.05, 0.08, 0.08, 0.01, 'back']);          // lats
+    for (let k = 0; k < 3; k++) F.push([sx * 0.03, sp1.y + 0.05 - k * 0.055, null, 0.022, 0.02, 0.08, 0.005, 'front']); // abs
+  }
+  const ball = []; // 3D round bumps: [center, radius, amp, facingVector|null]
+  for (const sd of ['Left', 'Right']) {
+    const arm = wp(sd + 'Arm'), fore = wp(sd + 'ForeArm'), hand = wp(sd + 'Hand'), up = wp(sd + 'UpLeg'), leg = wp(sd + 'Leg'), foot = wp(sd + 'Foot');
+    ball.push([arm, 0.065, 0.02, null]);                                        // deltoid
+    ball.push([arm.clone().lerp(fore, 0.5), 0.06, 0.012, null]);                // biceps/triceps
+    ball.push([fore.clone().lerp(hand, 0.25), 0.05, 0.009, null]);              // forearm
+    ball.push([up.clone().lerp(leg, 0.45), 0.09, 0.016, new THREE.Vector3(0, 0, 1)]); // quads
+    ball.push([leg.clone().lerp(foot, 0.3), 0.065, 0.016, new THREE.Vector3(0, 0, -1)]); // calves
+    ball.push([up.clone().add(new THREE.Vector3(0, 0.02, -0.06)), 0.08, 0.012, new THREE.Vector3(0, 0, -1)]); // glutes
+  }
+  const out = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    const x = ps.getX(i), y = ps.getY(i), z = ps.getZ(i), nx = nr.getX(i), nz = nr.getZ(i); let d = 0;
+    for (const [fx, fy, fz2, sx, sy, sz, amp, dir] of F) {
+      if (dir === 'front' && nz < 0.25) continue; if (dir === 'back' && nz > -0.25) continue; if (dir === 'side' && Math.abs(nx) < 0.55) continue;
+      const q = ((x - fx) / sx) ** 2 + ((y - fy) / sy) ** 2 + (fz2 == null ? 0 : ((z - fz2) / sz) ** 2);
+      if (q < 9) d += amp * Math.exp(-q);
+    }
+    for (const [c, r, amp, f] of ball) {
+      const dx = x - c.x, dy = y - c.y, dz = z - c.z, q = (dx * dx + dy * dy + dz * dz) / (r * r);
+      if (q > 9) continue; if (f && nr.getX(i) * f.x + nr.getY(i) * f.y + nz * f.z < 0.1) continue;
+      d += amp * Math.exp(-q);
+    }
+    out[i] = d;
+  }
+  for (let i = 0; i < N; i++) ps.setXYZ(i, ps.getX(i) + nr.getX(i) * out[i], ps.getY(i) + nr.getY(i) * out[i], ps.getZ(i) + nr.getZ(i) * out[i]);
+  geo.computeVertexNormals();
+}
 // ---- pose the arms (and legs) to the mesh's pose for binding
 const changed = new Set();
 const pos = geo.attributes.position, P = i => new THREE.Vector3(pos.getX(i), pos.getY(i), pos.getZ(i));
