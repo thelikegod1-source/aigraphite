@@ -50,8 +50,8 @@ export function start(root, opts) {
   buildCourt(scene); buildCity(scene); buildHoop(scene);
 
   // ---------- players + ball ----------
-  const kits = [{ jersey: 0x2f62d8, trim: 0xffffff, shorts: 0x1d3f99, skin: 0xb9805a, hair: 0x1a120c, num: "1" },
-                { jersey: 0xd23b3b, trim: 0x111111, shorts: 0x8f1f1f, skin: 0x7a4b2e, hair: 0x0d0a08, num: "23" }];
+  const kits = [{ jersey: 0x2f62d8, trim: 0xffffff, shorts: 0x1d3f99, skin: 0xc8916a, hair: 0x1a120c, num: "1" },
+                { jersey: 0xd23b3b, trim: 0x111111, shorts: 0x8f1f1f, skin: 0x9a643f, hair: 0x0d0a08, num: "23" }];
   const players = kits.map((k, i) => makePlayer(i, k));
   players.forEach(p => scene.add(p.group));
   // Mixamo character; the built-in body stays if it can't load

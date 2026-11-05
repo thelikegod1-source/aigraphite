@@ -49,7 +49,8 @@ geo.applyMatrix4(new THREE.Matrix4().fromArray(mnode.getWorldMatrix()));
 geo = geo.toNonIndexed ? geo : geo;
 geo.deleteAttribute('normal'); geo.deleteAttribute('uv');
 geo = LoopSubdivision.modify(geo, +iters, { split: false, uvSmooth: false, preserveEdges: false, flatOnly: false, maxTriangles: 60000 });
-geo = (await import('three/examples/jsm/utils/BufferGeometryUtils.js')).mergeVertices(geo, 1e-5);
+for (const k of Object.keys(geo.attributes)) if (k !== 'position') geo.deleteAttribute(k); // weld by position only (no seams)
+geo = (await import('three/examples/jsm/utils/BufferGeometryUtils.js')).mergeVertices(geo, 1e-4);
 geo.computeVertexNormals();
 
 // fit: feet on the floor, head top at the skeleton's head top, centered on the hips
@@ -77,7 +78,8 @@ for (const side of ['Left', 'Right']) {
   arm.quaternion.premultiply(pq.clone().invert().multiply(qw).multiply(pq));
   rootGroup.updateMatrixWorld(true);
   // stretch the arm bones to the mesh's reach (clips only rotate bones, so lengths are ours to set)
-  const hand = wp(side + 'Hand'), reach = far.distanceTo(sh), chain = hand.distanceTo(sh) + 0.09, k = (reach - 0.09) / (chain - 0.09);
+  // reach is to the fingertips; the wrist sits about a hand-length (~0.19) before that
+  const hand = wp(side + 'Hand'), reach = far.distanceTo(sh), chain = hand.distanceTo(sh), k = Math.max(0.9, Math.min(1.15, (reach - 0.19) / chain));
   B(side + 'ForeArm').position.multiplyScalar(k); B(side + 'Hand').position.multiplyScalar(k); rootGroup.updateMatrixWorld(true);
   changed.add(side + 'ForeArm'); changed.add(side + 'Hand');
   console.log(side, 'arm: reach mesh', reach.toFixed(2), 'skeleton', chain.toFixed(2), 'stretch', k.toFixed(2));
@@ -122,6 +124,17 @@ for (let i = 0; i < pos.count; i++) {
   cand.forEach(([n], k) => { J[i * 4 + k] = idx[n]; W[i * 4 + k] = ws[k]; });
 }
 
+// ---- bulk up: athletic chest/shoulders/legs (push out along the normal, by the vertex's main bone)
+{
+  const nr = geo.attributes.normal, names = allBones;
+  const BULK = { Spine2: 0.03, Spine1: 0.026, Spine: 0.02, Shoulder: 0.026, Hips: 0.016, UpLeg: 0.016, Leg: 0.008, Arm: 0.011, ForeArm: 0.006, Neck: 0.012 };
+  for (let i = 0; i < pos.count; i++) {
+    let wsum = 0;
+    for (let k = 0; k < 4; k++) { const nm = names[J[i * 4 + k]].replace('mixamorig:', '').replace(/^(Left|Right)/, ''); wsum += (BULK[nm] || 0) * W[i * 4 + k]; }
+    pos.setXYZ(i, pos.getX(i) + nr.getX(i) * wsum, pos.getY(i) + nr.getY(i) * wsum, pos.getZ(i) + nr.getZ(i) * wsum);
+  }
+  geo.computeVertexNormals();
+}
 // ---- write: reuse the X Bot document's nodes (skeleton), replace its meshes with ours
 for (const m of xdoc.getRoot().listMeshes()) m.dispose();
 for (const sk of xdoc.getRoot().listSkins()) sk.dispose();

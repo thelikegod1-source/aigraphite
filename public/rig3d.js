@@ -36,7 +36,7 @@ export function attachRig(p, rig, colors) {
   const box = new THREE.Box3().setFromObject(root), h = box.max.y - box.min.y || 1, s = HEIGHT / h;
   root.scale.setScalar(s); root.position.y = -box.min.y * s; const baseY = root.position.y;
   // "clothes": paint each vertex by the bone that moves it (jersey, shorts, skin, socks, shoes, hair)
-  const body = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62, metalness: 0.02 });
+  const body = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.02, emissive: 0x2a2018, emissiveIntensity: 0.6 });
   const joints = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.05 });
   root.traverse(o => {
     if (!o.isMesh) return;
