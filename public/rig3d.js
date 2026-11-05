@@ -39,7 +39,7 @@ export function attachRig(p, rig, colors) {
   const joints = new THREE.MeshStandardMaterial({ color: colors.trim === 0xffffff ? 0xe9edf5 : 0x1b1b1f, roughness: 0.4, metalness: 0.3 });
   root.traverse(o => { if (o.isMesh) { o.material = /Joint/i.test(o.name) ? joints : body; o.castShadow = true; o.frustumCulled = false; } });
   const bone = n => root.getObjectByName("mixamorig:" + n) || root.getObjectByName("mixamorig" + n);
-  const b = { L: bone("LeftHand"), R: bone("RightHand"), armL: bone("LeftArm"), armR: bone("RightArm"),
+  const b = { pL: bone("LeftHandMiddle1") || bone("LeftHand"), pR: bone("RightHandMiddle1") || bone("RightHand"), L: bone("LeftHand"), R: bone("RightHand"), armL: bone("LeftArm"), armR: bone("RightArm"),
     foreL: bone("LeftForeArm"), foreR: bone("RightForeArm"), spine: bone("Spine1"), head: bone("Head"), neck: bone("Neck"),
     upL: bone("LeftUpLeg"), upR: bone("RightUpLeg"), legL: bone("LeftLeg"), legR: bone("RightLeg"), footL: bone("LeftFoot"), footR: bone("RightFoot") };
   if (!b.L || !b.R) return false;
@@ -125,7 +125,7 @@ export function updateRig(p, t, dt, other) {
   const fr = m.prevFacing == null ? 0 : Math.atan2(Math.sin(p.facing - m.prevFacing), Math.cos(p.facing - m.prevFacing)) / Math.max(dt, 1e-3);
   m.prevFacing = p.facing;
   if (dt > 0) leanS += Math.max(-0.3, Math.min(0.3, fr * 0.07 * speed)) * BANK;
-  if (p.stumble > t) { leanF = -0.4; leanS = Math.sin(t * 9) * 0.4; }
+  if (p.stumble > t) { leanF = -0.4; leanS = Math.sin(t * 4) * 0.22; }
   const air = p.y > 0.02;
   if (p.shooting && !air) dip = 0.12; // gather
   if (m.wasAir && !air) m.land = t; m.wasAir = air;
@@ -168,6 +168,16 @@ export function updateRig(p, t, dt, other) {
       : [mixV(V(side * 0.4, -0.8, 0.3), V(side * 0.9, -0.45, 0.15), catchK), mixV(V(side * 0.2, -0.3, 0.9), V(side * 0.55, -0.55, 0.45), catchK)],
       Math.min(1, arc * 2.2) * (1 - out));
   }
+  if (mv?.kind === "cross" || mv?.kind === "swap") {
+    const sFrom = mv.from === 1 ? -1 : 1, k = mk, sm = x => x * x * (3 - 2 * x);
+    const push = sm(Math.min(1, k / 0.28)) * (1 - sm(Math.max(0, Math.min(1, (k - 0.28) / 0.25))));
+    const catchK = sm(Math.max(0, Math.min(1, (k - 0.45) / 0.25))) * (1 - sm(Math.max(0, (k - 0.85) / 0.15)));
+    const big = mv.kind === "cross" ? 1 : 0.6;
+    aimArms(m, p.group, side => side === sFrom
+      ? (push > 0.01 ? [V(side * 0.6 * big, -0.75, 0.3), V(side * 0.35 * big, -0.7, 0.6)] : null)
+      : (catchK > 0.01 ? [V(side * 0.55 * big, -0.75, 0.35), V(-side * 0.1, -0.6, 0.8)] : null),
+      Math.max(push, catchK) * 0.9);
+  }
   // reach for a steal: one arm jabs low at the ball
   const reach = p.reachT && t - p.reachT < 0.35 ? Math.sin(Math.PI * (t - p.reachT) / 0.35) : 0;
   if (reach > 0.01) aimArms(m, p.group, side => side > 0 ? tv.set(0.25, -0.35, 1) : tv.set(-0.6, -0.3, 0.4), reach);
@@ -191,7 +201,7 @@ export function updateRig(p, t, dt, other) {
     m.root.position.y = m.baseY + m.ground; p.group.updateMatrixWorld(true);
   } else m.ground = lerp(m.ground ?? 0, 0, ease(8));
   // defense: upper arms out, elbows bent, hands up and active
-  if (m.defW > 0.01 && !reach) aimArms(m, p.group, side => { const a = Math.sin(t * 5 + side * 1.7) * 0.3; return [V(side * 0.9, -0.25 + a * 0.4, 0.3), V(side * 0.25, 0.55 + a, 0.75)]; }, m.defW);
+  if (m.defW > 0.01 && !reach) aimArms(m, p.group, side => { const a = Math.sin(t * 2.2 + side * 1.7) * 0.12; return [V(side * 0.9, -0.25 + a * 0.4, 0.3), V(side * 0.25, 0.55 + a, 0.75)]; }, m.defW);
   // head tracks the ball (or the rim when shooting), within a natural range
   if (m.b.head && p.lookT) {
     p.group.updateMatrixWorld(true);
@@ -205,6 +215,7 @@ export function updateRig(p, t, dt, other) {
   }
   // the game reads hand positions for the ball
   p.hands = m.mirror ? [m.b.R, m.b.L] : [m.b.L, m.b.R];
+  p.palms = m.mirror ? [m.b.pR, m.b.pL] : [m.b.pL, m.b.pR]; // where the ball actually sits
   p.handL = p.hands[0]; p.handR = p.hands[1];
 }
 const lerp = (a, b, k) => a + (b - a) * k;

@@ -253,10 +253,13 @@ export function start(root, opts) {
       if (rel || pl.meter >= 1.05) release(pl);
     } else if (pl.dunking && pl.hasBall && rel) { pl.dunking = false; pl.meter = GREEN_C - 0.05; release(pl); } // let go early: layup
     // facing: toward motion, or the hoop when shooting / holding
+    // defenders always square up to the ball handler and slide (no flipping between run direction and the man)
+    const toO = flat(o.pos).sub(flat(pl.pos)), faceO = toO.lengthSq() > 0.09 ? Math.atan2(toO.x, toO.z) : pl.facing;
     const face = pl.move?.kind === "stepback" || pl.move?.kind === "hop" ? Math.atan2(RIM.x - pl.pos.x, RIM.z - pl.pos.z)
+      : !pl.hasBall && o.hasBall ? faceO
       : pl.vel.lengthSq() > 0.3 && !pl.shooting ? Math.atan2(pl.vel.x, pl.vel.z)
-      : pl.hasBall || pl.shooting ? Math.atan2(RIM.x - pl.pos.x, RIM.z - pl.pos.z) : Math.atan2(o.pos.x - pl.pos.x, o.pos.z - pl.pos.z);
-    pl.facing += Math.atan2(Math.sin(face - pl.facing), Math.cos(face - pl.facing)) * 0.2;
+      : pl.hasBall || pl.shooting ? Math.atan2(RIM.x - pl.pos.x, RIM.z - pl.pos.z) : faceO;
+    pl.facing += Math.atan2(Math.sin(face - pl.facing), Math.cos(face - pl.facing)) * (1 - Math.exp(-dt * 9));
   }
   function handsMid(pl) { pl.group.updateMatrixWorld(true); pl.handL.getWorldPosition(tmp); pl.handR.getWorldPosition(tmp2); return tmp.clone().add(tmp2).multiplyScalar(0.5).add(new THREE.Vector3(0, 0.12, 0)); }
   function stepBall(dt) {
@@ -264,29 +267,35 @@ export function start(root, opts) {
       const pl = ball.holder; pl.group.updateMatrixWorld(true);
       if (pl.shooting || pl.dunking || pl.y > 0) { ball.p.copy(pl.dunking ? (pl.handR.getWorldPosition(tmp), tmp.add(new THREE.Vector3(0, .1, 0))) : handsMid(pl)); return; }
       if (pl.move && (pl.move.kind === "cross" || pl.move.kind === "behind" || pl.move.kind === "swap")) {
-        const k = Math.min(1, (t - pl.move.t0) / pl.move.dur), a = pl.hands[pl.move.from], b = pl.hands[1 - pl.move.from], kind = pl.move.kind;
-        a.getWorldPosition(tmp); b.getWorldPosition(tmp2);
-        // behind the back: pull the ball out wide first (first ~third), then wrap it; everything eased
-        const pull = kind === "behind" ? Math.min(1, k / 0.32) : 0, kk = kind === "behind" ? Math.max(0, (k - 0.25) / 0.75) : k;
-        const e = kk * kk * (3 - 2 * kk);
-        ball.p.lerpVectors(tmp, tmp2, e); ball.p.y = 0.15 + (Math.min(0.78, Math.min(tmp.y, tmp2.y)) - 0.15) * Math.abs(Math.cos(Math.PI * e)); // stays low through the move
-        const f = fwdOf(pl), out = new THREE.Vector3(f.z, 0, -f.x).multiplyScalar(pl.move.from === 1 ? -1 : 1); // toward the ball side
-        if (kind === "behind") { ball.p.addScaledVector(out, 0.35 * Math.sin(Math.PI * Math.min(1, pull * 0.5 + e * 0.5))); ball.p.addScaledVector(f, -0.5 * Math.sin(Math.PI * e)); }
-        if (kind === "cross") { ball.p.addScaledVector(out, 0.32 * Math.sin(Math.PI * Math.min(1, k * 1.6)) * (1 - e)); ball.p.addScaledVector(f, 0.15 * Math.sin(Math.PI * e)); } // pull it wide, then a big low sweep in front
+        // held in the palm → one low bounce across → caught in the other palm
+        const k = Math.min(1, (t - pl.move.t0) / pl.move.dur), kind = pl.move.kind, P = pl.palms || pl.hands, from = pl.move.from;
+        P[from].getWorldPosition(tmp); P[1 - from].getWorldPosition(tmp2);
+        const hold = kind === "behind" ? 0.32 : 0.28, catchAt = kind === "behind" ? 0.76 : 0.7;
+        if (k < hold) { ball.p.copy(tmp); ball.p.y -= BALL_R; }
+        else if (k > catchAt) { ball.p.copy(tmp2); ball.p.y -= BALL_R; }
+        else {
+          const u = (k - hold) / (catchAt - hold), e = u * u * (3 - 2 * u), y0 = tmp.y - BALL_R, y1 = tmp2.y - BALL_R;
+          ball.p.lerpVectors(tmp, tmp2, e);
+          ball.p.y = e < 0.5 ? y0 + (BALL_R - y0) * (e / 0.5) ** 2 : BALL_R + (y1 - BALL_R) * (1 - (1 - (e - 0.5) / 0.5) ** 2);
+          const f = fwdOf(pl);
+          if (kind === "behind") ball.p.addScaledVector(f, -0.45 * Math.sin(Math.PI * e)); else ball.p.addScaledVector(f, 0.12 * Math.sin(Math.PI * e));
+          if (e >= 0.5 && !pl.moveBounce) { pl.moveBounce = true; if (pl.team === ME) tone(95, .04, "sine", .05); } else if (e < 0.5) pl.moveBounce = false;
+        }
+        ball.spin += dt * 6;
         return;
       }
-      pl.hands[pl.hand].getWorldPosition(tmp);
+      (pl.palms || pl.hands)[pl.hand].getWorldPosition(tmp);
       const da = pl.mx?.actions?.dribbleU;
       if (da) {
         // the clip pushes the ball down from the top of the hand's path to the bottom (3 bounces per loop);
         // from the bottom the ball drops to the floor and comes back up into the hand at its next high point
         const T = da.time % DRIB.dur; let i = 0; while (i < 2 && T > DRIB.max[i + 1]) i++;
         const lo = DRIB.min[i], hi = DRIB.max[i + 1];
-        if (T < lo && T >= DRIB.max[i]) { ball.p.set(tmp.x, tmp.y - 0.1, tmp.z); pl.ballOut = null; }
+        if (T < lo && T >= DRIB.max[i]) { ball.p.set(tmp.x, tmp.y - BALL_R, tmp.z); pl.ballOut = null; } // in the palm
         else {
           const k = Math.min(1, (T - lo) / (hi - lo)), FL = 0.45;
-          if (!pl.ballOut) pl.ballOut = tmp.y - 0.1;
-          const y = k < FL ? pl.ballOut + (BALL_R - pl.ballOut) * (k / FL) ** 2 : BALL_R + (tmp.y - 0.1 - BALL_R) * (1 - (1 - (k - FL) / (1 - FL)) ** 2);
+          if (!pl.ballOut) pl.ballOut = tmp.y - BALL_R;
+          const y = k < FL ? pl.ballOut + (BALL_R - pl.ballOut) * (k / FL) ** 2 : BALL_R + (tmp.y - BALL_R - BALL_R) * (1 - (1 - (k - FL) / (1 - FL)) ** 2);
           ball.p.set(tmp.x, Math.max(BALL_R, y), tmp.z);
           if (k >= FL && !pl.bounced) { pl.bounced = true; if (pl.team === ME) tone(95, .04, "sine", .05); } else if (k < FL) pl.bounced = false;
         }
