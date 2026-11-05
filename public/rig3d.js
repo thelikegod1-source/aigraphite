@@ -47,6 +47,9 @@ export function attachRig(p, rig, colors) {
   for (const [k, c] of Object.entries(rig.clips)) { actions[k] = mixer.clipAction(c); actions[k].play(); actions[k].setEffectiveWeight(0); }
   p.hip.visible = false; p.group.add(root);
   p.mx = { root, mixer, actions, b, s, baseY, w: {}, mirror: false };
+  { // rest ankle height, for keeping feet on the floor
+    p.group.updateMatrixWorld(true); const v = new THREE.Vector3(); if (b.footL) { b.footL.getWorldPosition(v); p.mx.ankle = v.y - p.group.position.y; }
+  }
   if (actions.idleU) { actions.idleU.setEffectiveWeight(1); actions.idleL.setEffectiveWeight(1); p.mx.w.idleU = p.mx.w.idleL = 1; }
   return true;
 }
@@ -92,7 +95,7 @@ export function updateRig(p, t, dt, other) {
   // body: dip and lean into moves, sit down on defense, lean back on step backs
   let dip = def ? 0.07 : 0, leanF = def ? 0.22 : p.hasBall ? 0.1 + speed * 0.15 : speed * 0.15, leanS = 0, twist = 0;
   if (mv?.kind === "cross" || mv?.kind === "behind") { const sgn = p.hand ? -1 : 1; dip = 0.1 * arc; leanF += 0.25 * arc; leanS = sgn * 0.35 * arc; twist = sgn * 0.4 * arc; }
-  else if (mv?.kind === "spin") { dip = 0.09; leanF += 0.3; }
+  else if (mv?.kind === "spin") { dip = 0.1; leanF = 0.12; }
   else if (mv?.kind === "stepback" || mv?.kind === "hop") { leanF = -0.35 * arc; dip = -0.08 * arc; }
   if (p.stumble > t) { leanF = -0.4; leanS = Math.sin(t * 9) * 0.4; }
   const air = p.y > 0.02;
@@ -101,7 +104,7 @@ export function updateRig(p, t, dt, other) {
   if (m.land && t - m.land < 0.25) dip = Math.max(dip, 0.1 * Math.sin(Math.PI * (t - m.land) / 0.25)); // soft landing
   if (air && (p.shooting || p.released)) leanF = 0.05;
   m.dip = lerp(m.dip || 0, dip, ease(14)); m.lf = lerp(m.lf || 0, leanF, ease(12)); m.ls = lerp(m.ls || 0, leanS, ease(12)); m.tw = lerp(m.tw || 0, twist, ease(12));
-  m.root.position.y = m.baseY - m.dip;
+  m.root.position.y = m.baseY;
   p.group.updateMatrixWorld(true);
   turn(m.b.spine, X, m.lf, p.group); turn(m.b.spine, Z, -m.ls * (m.mirror ? -1 : 1), p.group); turn(m.b.spine, Y, m.tw, p.group);
   // arms: blend in overhead (shots, blocks, dunks) or wide (defense)
@@ -117,20 +120,58 @@ export function updateRig(p, t, dt, other) {
       hang && !(p.slam && t - p.slam < 0.15) ? tv.set(side * 0.12, 1, 0.12) // hanging on the rim
       : p.dunking ? dunkArm(p, side)
       : slam ? tv.set(side * 0.1, 0.6, 0.8) // throw it down
-      : follow && !p.hasBall ? tv.set(side * 0.08, 1, 0.3)
-      : tv.set(side * (0.35 - 0.23 * m.rise), -0.2 + 1.2 * m.rise, 0.9 - 0.5 * m.rise), m.upW);
+      : follow && !p.hasBall ? followThrough(side, Math.min(1, followT / 0.25))
+      : p.shooting && p.hasBall ? shotForm(side, m.rise)
+      : tv.set(side * 0.1, 1, 0.15), m.upW); // block: hands straight up
+  // off arm while dribbling: an arm bar out front to shield the ball (the dribble arm stays on the clip)
+  const guard = p.hasBall && !p.shooting && !p.dunking && !(mv && (mv.kind === "cross" || mv.kind === "behind")) ? 1 : 0;
+  m.guardW = lerp(m.guardW || 0, guard, ease(8));
+  if (m.guardW > 0.01) aimArmSide(m, p.group, m.mirror ? -1 : 1, [V(0.5, -0.35, 0.65), V(-0.15, 0.25, 1)], m.guardW * 0.85);
   // reach for a steal: one arm jabs low at the ball
   const reach = p.reachT && t - p.reachT < 0.35 ? Math.sin(Math.PI * (t - p.reachT) / 0.35) : 0;
   if (reach > 0.01) aimArms(m, p.group, side => side > 0 ? tv.set(0.25, -0.35, 1) : tv.set(-0.6, -0.3, 0.4), reach);
   // legs tuck a little in the air, hang straight on the rim, split on the way up for a dunk
   m.airW = lerp(m.airW || 0, air && !hang ? 1 : 0, ease(10));
-  if (m.airW > 0.01) aimLegs(m, p.group, m.airW);
-  if (m.defW > 0.01 && !reach) aimArms(m, p.group, side => tv.set(side * 0.85, -0.15 + Math.sin(t * 5 + side) * 0.25, 0.45), m.defW);
+  // dunks: lead knee drives up, back leg trails; otherwise a light tuck
+  if (m.airW > 0.01) aimLegs(m, p.group, m.airW, p.dunking || hang ? (hang ? () => [0.1, 0.15, 0.05] : side => side > 0 ? [1.1, 1.3, 0.05] : [-0.25, 0.7, 0.05]) : undefined);
+  // crouch with real knee bend (defense stance, gathers, landings, moves), wider base on D
+  const bend = Math.min(1, m.dip / 0.12), stanceW = (1 - m.airW) * (1 - Math.min(1, speed * 1.4) * 0.75);
+  m.defLeg = lerp(m.defLeg || 0, def ? 1 : 0, ease(6));
+  if (stanceW > 0.01 && (bend > 0.02 || m.defLeg > 0.02)) {
+    const c = Math.max(bend, m.defLeg * 0.85);
+    aimLegs(m, p.group, stanceW, () => [0.15 + 0.6 * c, 0.1 + 0.55 * c, 0.12 + 0.28 * m.defLeg]);
+  }
+  // keep the lowest foot on the court so bent knees lower the body instead of sinking the feet
+  if (!air && !hang && m.ankle != null) {
+    p.group.updateMatrixWorld(true);
+    m.b.footL.getWorldPosition(tmpA); m.b.footR.getWorldPosition(tmpB);
+    const low = Math.min(tmpA.y, tmpB.y) - p.group.position.y;
+    m.ground = lerp(m.ground ?? 0, m.ankle - low, ease(20));
+    m.root.position.y = m.baseY + m.ground; p.group.updateMatrixWorld(true);
+  } else m.ground = lerp(m.ground ?? 0, 0, ease(8));
+  // defense: upper arms out, elbows bent, hands up and active
+  if (m.defW > 0.01 && !reach) aimArms(m, p.group, side => { const a = Math.sin(t * 5 + side * 1.7) * 0.3; return [V(side * 0.9, -0.25 + a * 0.4, 0.3), V(side * 0.25, 0.55 + a, 0.75)]; }, m.defW);
   // the game reads hand positions for the ball
   p.hands = m.mirror ? [m.b.R, m.b.L] : [m.b.L, m.b.R];
   p.handL = p.hands[0]; p.handR = p.hands[1];
 }
 const lerp = (a, b, k) => a + (b - a) * k;
+const V = (x, y, z) => new THREE.Vector3(x, y, z);
+const mixV = (a, b, k) => a.clone().lerp(b, k);
+// jump shot, by how far the ball has risen (0 = gather at the chest, 1 = set point above the forehead).
+// Shooting hand is the visual right (side -1); the guide hand sits on the side of the ball.
+function shotForm(side, k) {
+  const shoot = side < 0;
+  const gatherUp = V(side * 0.3, -0.75, 0.6), gatherLo = V(-side * 0.2, 0.25, 1);
+  const setUp = shoot ? V(side * 0.15, 0.85, 0.5) : V(side * 0.55, 0.55, 0.6);
+  const setLo = shoot ? V(0, 1, -0.15) : V(-side * 0.55, 0.75, 0.2);
+  return [mixV(gatherUp, setUp, k), mixV(gatherLo, setLo, k)];
+}
+// release: shooting arm extends up and out toward the rim, wrist snaps; guide hand comes off
+function followThrough(side, k) {
+  if (side < 0) return [mixV(V(-0.15, 0.85, 0.5), V(-0.05, 0.85, 0.55), k), mixV(V(0, 1, -0.15), V(0, 0.8, 0.6), k)];
+  return [V(0.6, 0.4, 0.5), V(0.2, 0.6, 0.6)];
+}
 // arm direction on the way up for each dunk style (side: +1 / -1 per arm)
 function dunkArm(p, side) {
   const k = Math.min(1, p.y / 1.3);
@@ -153,8 +194,12 @@ function aimArms(m, group, dirFn, w) {
   const flip = m.mirror ? -1 : 1;
   for (const [arm, fore, hand, side] of [[m.b.armL, m.b.foreL, m.b.L, 1], [m.b.armR, m.b.foreR, m.b.R, -1]]) {
     // model faces +z, so its left hand is +x; mirroring swaps that
-    want.copy(dirFn(side * flip)).normalize().applyQuaternion(qp);
-    for (const [j, child] of [[arm, fore], [fore, hand]]) {
+    // dirFn gives one direction (straight arm) or [upper arm, forearm] (bent elbow), in player space
+    const d = dirFn(side * flip); if (!d) continue;
+    const up = Array.isArray(d) ? d[0] : d, lo = Array.isArray(d) ? d[1] : d;
+    const wUp = up.clone().normalize().applyQuaternion(qp), wLo = lo.clone().normalize().applyQuaternion(qp);
+    for (const [j, child, dir] of [[arm, fore, wUp], [fore, hand, wLo]]) {
+      want.copy(dir);
       j.updateMatrixWorld(true);
       j.getWorldPosition(tmpA); child.getWorldPosition(tmpB);
       qx.setFromUnitVectors(tmpB.sub(tmpA).normalize(), want);
@@ -165,12 +210,20 @@ function aimArms(m, group, dirFn, w) {
   }
 }
 
+// aim just one arm, by visual side (+1 left, -1 right)
+function aimArmSide(m, group, vside, dirs, w) {
+  const flip = m.mirror ? -1 : 1;
+  aimArms(m, group, side => side === vside ? [dirs[0].clone().setX(dirs[0].x * vside), dirs[1].clone().setX(dirs[1].x * vside)] : null, w);
+}
 const leg = new THREE.Vector3(), shin = new THREE.Vector3();
-function aimLegs(m, group, w) {
+// legFn(side) → [thigh forward, shin back, stance width] for that leg (side +1 = visual left)
+function aimLegs(m, group, w, legFn = side => side > 0 ? [0.45, 0.63, 0] : [0.25, 0.35, 0]) {
   group.getWorldQuaternion(qp);
-  for (const [up, low, foot, f] of [[m.b.upL, m.b.legL, m.b.footL, 0.45], [m.b.upR, m.b.legR, m.b.footR, 0.25]]) {
+  const flip = m.mirror ? -1 : 1;
+  for (const [up, low, foot, side] of [[m.b.upL, m.b.legL, m.b.footL, 1], [m.b.upR, m.b.legR, m.b.footR, -1]]) {
     if (!up || !low || !foot) continue;
-    leg.set(0, -1, f).normalize().applyQuaternion(qp); shin.set(0, -1, -f * 1.4).normalize().applyQuaternion(qp);
+    const [f, b, wd] = legFn(side * flip), sx = side * flip * wd;
+    leg.set(sx, -1, f).normalize().applyQuaternion(qp); shin.set(sx * 0.3, -1, -b).normalize().applyQuaternion(qp);
     for (const [j, child, d] of [[up, low, leg], [low, foot, shin]]) {
       j.updateMatrixWorld(true); j.getWorldPosition(tmpA); child.getWorldPosition(tmpB);
       qx.setFromUnitVectors(tmpB.sub(tmpA).normalize(), d); qx.slerp(qi.identity(), 1 - w);
