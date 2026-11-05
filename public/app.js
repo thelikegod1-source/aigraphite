@@ -907,7 +907,7 @@ async function support(msg) {
   </div>
   ${me.admin ? `<div class="panel">
     <span class="label">Owner · gift Plus</span>
-    <form id="gf" class="btns" autocomplete="off"><input type="text" id="gcode" placeholder="Player code" aria-label="Player code to gift Plus"><button>Grant</button></form>
+    <form id="gf" class="btns" autocomplete="off"><input type="text" id="gcode" placeholder="Username or player code" aria-label="Username or player code to gift Plus"><button>Grant</button></form>
     <div class="btns"><button class="ghost" id="grev">Remove Plus</button></div>
     <p class="small" id="gmsg">Players find their code on the Profile tab.</p>
   </div>` : ""}
