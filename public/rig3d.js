@@ -38,12 +38,16 @@ export function attachRig(p, rig, colors) {
   // "clothes": paint each vertex by the bone that moves it (jersey, shorts, skin, socks, shoes, hair)
   const body = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.02, emissive: 0x2a2018, emissiveIntensity: 0.6 });
   const joints = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.05 });
+  const gearList = [];
   root.traverse(o => {
     if (!o.isMesh) return;
     const j = /Joint/i.test(o.name);
-    o.geometry = o.geometry.clone(); paintKit(o, colors, j);
+    o.geometry = o.geometry.clone(); const info = paintKit(o, colors, j);
     o.material = j ? joints : body; o.castShadow = true; o.frustumCulled = false;
+    if (info && !j) gearList.push([o, info]);
   });
+  root.updateMatrixWorld(true);
+  for (const [o, info] of gearList) addGear(o, info, colors, root, p.team);
   const bone = n => root.getObjectByName("mixamorig:" + n) || root.getObjectByName("mixamorig" + n);
   const b = { pL: bone("LeftHandMiddle1") || bone("LeftHand"), pR: bone("RightHandMiddle1") || bone("RightHand"), L: bone("LeftHand"), R: bone("RightHand"), armL: bone("LeftArm"), armR: bone("RightArm"),
     foreL: bone("LeftForeArm"), foreR: bone("RightForeArm"), spine: bone("Spine1"), head: bone("Head"), neck: bone("Neck"),
@@ -66,7 +70,7 @@ function paintKit(mesh, c, isJoint) {
   const names = mesh.skeleton.bones.map(b => b.name.replace(/^mixamorig:?/, ""));
   const col = h => new THREE.Color(h).convertSRGBToLinear();
   const C = { jersey: col(c.jersey), trim: col(c.trim), shorts: col(c.shorts), skin: col(c.skin), hair: col(c.hair), sock: col(0xf2f2f2), shoe: col(c.trim === 0xffffff ? 0xf5f5f5 : 0x1a1a1a), sole: col(0xdddddd) };
-  const n = pos.count, out = new Float32Array(n * 3), dom = new Array(n);
+  const n = pos.count, out = new Float32Array(n * 3), dom = new Array(n), cats = new Array(n), fr = new Float32Array(n);
   // dominant bone per vertex, plus height range per bone group (bind pose)
   const range = {};
   for (let i = 0; i < n; i++) {
@@ -89,10 +93,90 @@ function paintKit(mesh, c, isJoint) {
     else if (/Leg$/.test(nm)) k = f < 0.28 ? "sock" : "skin";
     else if (/Foot|Toe/.test(nm)) k = f < 0.18 ? "sole" : "shoe";
     else k = "jersey";
+    cats[i] = k; fr[i] = f;
     const cc = C[k], d = isJoint && k !== "skin" && k !== "hair" ? 0.8 : 1; // seams a touch darker on clothes
     out[i * 3] = cc.r * d; out[i * 3 + 1] = cc.g * d; out[i * 3 + 2] = cc.b * d;
   }
   g.setAttribute("color", new THREE.BufferAttribute(out, 3));
+  return { cats, dom, fr };
+}
+
+// ---------- gear: real 3D layers and props that move with the skeleton ----------
+const hex = h => "#" + h.toString(16).padStart(6, "0");
+function canvasTex(w, h, draw) { const c = document.createElement("canvas"); c.width = w; c.height = h; draw(c.getContext("2d"), w, h); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t; }
+// a skinned copy of part of the body, pushed out along the normals (cloth over skin)
+function shell(mesh, keep, offsetFn, mat) {
+  const g = mesh.geometry, idx = g.index ? g.index.array : null, n = g.attributes.position.count;
+  const pos = g.attributes.position, nrm = g.attributes.normal, P = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { const o = keep(i) ? offsetFn(i) : 0; P[i * 3] = pos.getX(i) + nrm.getX(i) * o; P[i * 3 + 1] = pos.getY(i) + nrm.getY(i) * o; P[i * 3 + 2] = pos.getZ(i) + nrm.getZ(i) * o; }
+  const tri = []; const T = idx ? idx.length : n;
+  for (let t = 0; t < T; t += 3) { const a = idx ? idx[t] : t, b = idx ? idx[t + 1] : t + 1, c = idx ? idx[t + 2] : t + 2; if (keep(a) && keep(b) && keep(c)) tri.push(a, b, c); }
+  const sg = new THREE.BufferGeometry();
+  sg.setAttribute("position", new THREE.BufferAttribute(P, 3)); sg.setAttribute("skinIndex", g.attributes.skinIndex); sg.setAttribute("skinWeight", g.attributes.skinWeight);
+  sg.setIndex(tri); sg.computeVertexNormals();
+  const sm = new THREE.SkinnedMesh(sg, mat); sm.bind(mesh.skeleton, mesh.bindMatrix); sm.castShadow = true; sm.frustumCulled = false;
+  mesh.parent.add(sm); sm.position.copy(mesh.position); sm.quaternion.copy(mesh.quaternion); sm.scale.copy(mesh.scale);
+  return sm;
+}
+function addGear(mesh, info, c, root, team) {
+  const { cats, dom, fr } = info, pos = mesh.geometry.attributes.position;
+  const bone = n => root.getObjectByName("mixamorig" + n) || root.getObjectByName("mixamorig:" + n);
+  const wp = n => bone(n).getWorldPosition(new THREE.Vector3());
+  const toWorld = i => mesh.localToWorld(new THREE.Vector3(pos.getX(i), pos.getY(i), pos.getZ(i)));
+  const cloth = (col, rough = 0.85) => new THREE.MeshStandardMaterial({ color: col, roughness: rough, metalness: 0, emissive: col, emissiveIntensity: 0.06 });
+  // jersey: loose tank top over the torso, hem hanging over the shorts
+  const jIn = i => cats[i] === "jersey";
+  shell(mesh, jIn, i => /Hips/.test(dom[i]) ? 0.026 : /Spine$/.test(dom[i]) ? 0.022 : 0.014, cloth(c.jersey));
+  // shorts: baggy, flaring toward the knee
+  const sIn = i => cats[i] === "shorts";
+  shell(mesh, sIn, i => /UpLeg/.test(dom[i]) ? 0.02 + 0.03 * (1 - fr[i]) : 0.022, cloth(c.shorts));
+  // arm sleeve on the shooting arm (visual right)
+  shell(mesh, i => /RightForeArm|RightArm$/.test(dom[i]) && cats[i] === "skin" && !(/RightArm$/.test(dom[i]) && fr[i] > 0.6), () => 0.006, cloth(team ? 0x111111 : 0xffffff, 0.6));
+  // jersey numbers front and back, on the chest bone
+  const chest = bone("Spine2"); let zF = -1e9, zB = 1e9, yC = 0, nC = 0;
+  for (let i = 0; i < pos.count; i++) if (cats[i] === "jersey" && /Spine2|Spine1/.test(dom[i])) { const v = toWorld(i); zF = Math.max(zF, v.z); zB = Math.min(zB, v.z); yC += v.y; nC++; }
+  if (chest && nC) {
+    yC /= nC; const tex = canvasTex(256, 256, (x, w, h) => {
+      x.clearRect(0, 0, w, h); x.font = "900 170px 'Barlow Condensed', Impact, sans-serif"; x.textAlign = "center"; x.textBaseline = "middle";
+      x.lineWidth = 14; x.strokeStyle = hex(c.trim); x.fillStyle = "#ffffff"; x.strokeText(c.num, w / 2, h * 0.56); x.fillText(c.num, w / 2, h * 0.56);
+    });
+    const m = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
+    const sc = root.scale.x;
+    for (const [z, rot, size] of [[zF + 0.016 * sc, 0, 0.2], [zB - 0.016 * sc, Math.PI, 0.26]]) {
+      const pl = new THREE.Mesh(new THREE.PlaneGeometry(size * sc, size * sc), m); pl.position.set(0, yC + 0.02 * sc, z); pl.rotation.y = rot;
+      root.add(pl); root.updateMatrixWorld(true); chest.attach(pl);
+    }
+  }
+  // sneakers: shaped shoe with a sole and a stripe, on each foot bone
+  const shoeCol = team ? 0x1c1c1c : 0xf3f3f3, stripe = c.jersey;
+  for (const side of ["Left", "Right"]) {
+    const foot = bone(side + "Foot"), toe = bone(side + "ToeBase"); if (!foot || !toe) continue;
+    const a = wp(side + "Foot"), t2 = wp(side + "ToeBase"), sc = root.scale.x;
+    const dir = t2.clone().sub(a); dir.y = 0; dir.normalize();
+    const shoe = new THREE.Group();
+    const upper = new THREE.Mesh(new THREE.CapsuleGeometry(0.055 * sc, 0.17 * sc, 6, 14), new THREE.MeshStandardMaterial({ color: shoeCol, roughness: 0.45 }));
+    upper.rotation.x = Math.PI / 2; upper.scale.set(1.05, 1, 0.85); upper.position.set(0, 0.055 * sc, 0.03 * sc);
+    const sole = new THREE.Mesh(new THREE.BoxGeometry(0.12 * sc, 0.03 * sc, 0.3 * sc), new THREE.MeshStandardMaterial({ color: 0xe8e8e8, roughness: 0.7 }));
+    sole.position.set(0, 0.015 * sc, 0.03 * sc);
+    const st = new THREE.Mesh(new THREE.BoxGeometry(0.122 * sc, 0.02 * sc, 0.14 * sc), new THREE.MeshStandardMaterial({ color: stripe, roughness: 0.5 }));
+    st.position.set(0, 0.06 * sc, 0.0);
+    for (const m of [upper, sole, st]) { m.castShadow = true; shoe.add(m); }
+    shoe.position.set(a.x, 0, a.z).addScaledVector(dir, 0.04 * sc); shoe.lookAt(shoe.position.clone().add(dir));
+    root.attach(shoe); root.updateMatrixWorld(true); foot.attach(shoe);
+  }
+  // hair: short textured cap (fade), plus a headband
+  const head = bone("Head"), top = bone("HeadTop_End");
+  if (head && top) {
+    const h0 = wp("Head"), h1 = wp("HeadTop_End"), ctr = h0.clone().lerp(h1, 0.55);
+    let r = 0; for (let i = 0; i < pos.count; i++) if (cats[i] === "skin" || cats[i] === "hair") { const v = toWorld(i); if (v.y > h0.y) r = Math.max(r, Math.hypot(v.x - ctr.x, v.z - ctr.z)); }
+    r = Math.max(r, 0.08 * root.scale.x);
+    const hairTex = canvasTex(128, 128, (x, w, h) => { x.fillStyle = hex(c.hair); x.fillRect(0, 0, w, h); for (let i = 0; i < 900; i++) { x.fillStyle = `rgba(${Math.random() < .5 ? "255,255,255" : "0,0,0"},${Math.random() * .12})`; x.beginPath(); x.arc(Math.random() * w, Math.random() * h, 1.5 + Math.random() * 2, 0, 7); x.fill(); } });
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(r * 1.06, 28, 18, 0, Math.PI * 2, 0, Math.PI * 0.5), new THREE.MeshStandardMaterial({ map: hairTex, roughness: 0.95 }));
+    cap.scale.set(1, 1.05, 1.08); cap.position.copy(ctr).add(new THREE.Vector3(0, -0.005, -0.008)); cap.castShadow = true;
+    const band = new THREE.Mesh(new THREE.TorusGeometry(r * 1.07, r * 0.13, 8, 28), new THREE.MeshStandardMaterial({ color: team ? 0x111111 : 0xffffff, roughness: 0.7 }));
+    band.rotation.x = Math.PI / 2; band.position.copy(ctr).add(new THREE.Vector3(0, -r * 0.05, 0));
+    for (const m of [cap, band]) { root.attach(m); root.updateMatrixWorld(true); head.attach(m); }
+  }
 }
 const qa = new THREE.Quaternion(), qp = new THREE.Quaternion(), ax = new THREE.Vector3();
 // All bone posing happens in the model's own space (under its root), where the left-hand
