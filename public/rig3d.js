@@ -133,7 +133,7 @@ export function updateRig(p, t, dt, other) {
   p.group.updateMatrixWorld(true);
   turn(m, m.b.spine, X, m.lf); turn(m, m.b.spine, Z, -m.ls); turn(m, m.b.spine, Y, m.tw);
   // arms: blend in overhead (shots, blocks, dunks) or wide (defense)
-  const followT = p.released ? t - p.released : 9, follow = followT < 0.6;
+  const followT = p.released ? t - p.released : 9, follow = followT < 0.85;
   const hang = p.hang > t, slam = p.slam && t - p.slam < 0.25;
   const up = (p.shooting && p.hasBall) || follow || p.dunking || hang || slam || (p.blockT && t - p.blockT < 0.7);
   // shot path: ball at the chest on the gather, rising to the set point, then snapped up on release
@@ -209,14 +209,17 @@ const mixV = (a, b, k) => a.clone().lerp(b, k);
 function shotForm(side, k) {
   const shoot = side < 0;
   const gatherUp = V(side * 0.3, -0.75, 0.6), gatherLo = V(-side * 0.2, 0.25, 1);
-  const setUp = shoot ? V(side * 0.15, 0.85, 0.5) : V(side * 0.55, 0.55, 0.6);
-  const setLo = shoot ? V(0, 1, -0.15) : V(-side * 0.55, 0.75, 0.2);
+  // set point from a reference recording: high, above the forehead, forearms near vertical,
+  // guide hand coming across the top of the ball
+  const setUp = shoot ? V(side * 0.12, 0.9, 0.42) : V(side * 0.62, 0.62, 0.35);
+  const setLo = shoot ? V(0, 1, -0.1) : V(-side * 0.7, 0.62, 0.12);
   return [mixV(gatherUp, setUp, k), mixV(gatherLo, setLo, k)];
 }
 // release: shooting arm extends up and out toward the rim, wrist snaps; guide hand comes off
+// (from the recording: shooting arm finishes nearly straight up, guide hand stays up by the forehead, held for a beat)
 function followThrough(side, k) {
-  if (side < 0) return [mixV(V(-0.15, 0.85, 0.5), V(-0.05, 0.85, 0.55), k), mixV(V(0, 1, -0.15), V(0, 0.8, 0.6), k)];
-  return [V(0.6, 0.4, 0.5), V(0.2, 0.6, 0.6)];
+  if (side < 0) return [mixV(V(-0.12, 0.9, 0.42), V(-0.03, 0.95, 0.3), k), mixV(V(0, 1, -0.1), V(0, 0.92, 0.38), k)];
+  return [V(side * 0.62, 0.6, 0.35), mixV(V(-side * 0.7, 0.62, 0.12), V(-side * 0.45, 0.8, 0.15), k)];
 }
 // arm direction on the way up for each dunk style (side: +1 / -1 per arm)
 function dunkArm(p, side) {
