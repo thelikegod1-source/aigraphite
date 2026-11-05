@@ -359,7 +359,7 @@ export function start(root, opts) {
         }
       } else { input.move = null; if (!GUEST) for (const pl of players) stepPlayer(pl, dt, 0, 0, false, false); } // still fall / hang during the pause
       input.wasShoot = input.shoot;
-      for (const p of players) { animatePlayer(p, t, dt, players[1 - p.team]); rig?.updateRig(p, t, dt, players[1 - p.team]); }
+      for (const p of players) { animatePlayer(p, t, dt, players[1 - p.team]); p.lookT = p.shooting || p.dunking ? RIM : p.hasBall ? players[1 - p.team].head.getWorldPosition(p.lookV ||= new THREE.Vector3()).setY(1.7) : ball.p; rig?.updateRig(p, t, dt, players[1 - p.team]); }
       if (!GUEST || ball.holder) stepBall(dt); else guestBall();
       if (NET && !GUEST) sendState(dt);
       if (GUEST && ball.holder) root.querySelector("#hposs").textContent = `${offense === ME ? "Your ball" : "Defense"} · ${Math.max(0, Math.ceil(possClock))}`;
@@ -500,7 +500,7 @@ export function start(root, opts) {
     NET.onClose(() => { if (!over) finish(ME, true); });
   }
 
-  if (opts.debug) window.__h3 = { players, ball, get score() { return score; }, input, doMove: k => doMove(players[0], k), givePoss: tm => setupPossession(tm), get g() { return [gMeter, gWas, gSeq]; } };
+  if (opts.debug) window.__h3 = { players, ball, get score() { return score; }, input, doMove: k => doMove(players[0], k), givePoss: tm => setupPossession(tm), get rig() { return rig; }, get g() { return [gMeter, gWas, gSeq]; } };
   camera.position.set(0, 4, 14);
   msg(GUEST ? "Their ball · lock in on D" : ONLINE ? "Your ball · get buckets" : "Your ball · get buckets", 1600);
   raf = requestAnimationFrame(frame);

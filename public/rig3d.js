@@ -40,7 +40,7 @@ export function attachRig(p, rig, colors) {
   root.traverse(o => { if (o.isMesh) { o.material = /Joint/i.test(o.name) ? joints : body; o.castShadow = true; o.frustumCulled = false; } });
   const bone = n => root.getObjectByName("mixamorig:" + n) || root.getObjectByName("mixamorig" + n);
   const b = { L: bone("LeftHand"), R: bone("RightHand"), armL: bone("LeftArm"), armR: bone("RightArm"),
-    foreL: bone("LeftForeArm"), foreR: bone("RightForeArm"), spine: bone("Spine1"),
+    foreL: bone("LeftForeArm"), foreR: bone("RightForeArm"), spine: bone("Spine1"), head: bone("Head"), neck: bone("Neck"),
     upL: bone("LeftUpLeg"), upR: bone("RightUpLeg"), legL: bone("LeftLeg"), legR: bone("RightLeg"), footL: bone("LeftFoot"), footR: bone("RightFoot") };
   if (!b.L || !b.R) return false;
   const mixer = new THREE.AnimationMixer(root), actions = {};
@@ -63,6 +63,7 @@ function turn(bone, axis, ang, group) {
   bone.quaternion.premultiply(qa.setFromAxisAngle(ax, ang));
 }
 const X = new THREE.Vector3(1, 0, 0);
+let BANK = 1; export function setBank(v) { BANK = v; }
 
 export function updateRig(p, t, dt, other) {
   const m = p.mx; if (!m) return;
@@ -97,6 +98,10 @@ export function updateRig(p, t, dt, other) {
   if (mv?.kind === "cross" || mv?.kind === "behind") { const sgn = p.hand ? -1 : 1; dip = 0.1 * arc; leanF += 0.25 * arc; leanS = sgn * 0.35 * arc; twist = sgn * 0.4 * arc; }
   else if (mv?.kind === "spin") { dip = 0.1; leanF = 0.12; }
   else if (mv?.kind === "stepback" || mv?.kind === "hop") { leanF = -0.35 * arc; dip = -0.08 * arc; }
+  // bank into turns while moving
+  const fr = m.prevFacing == null ? 0 : Math.atan2(Math.sin(p.facing - m.prevFacing), Math.cos(p.facing - m.prevFacing)) / Math.max(dt, 1e-3);
+  m.prevFacing = p.facing;
+  if (dt > 0) leanS += Math.max(-0.3, Math.min(0.3, fr * 0.07 * speed)) * BANK;
   if (p.stumble > t) { leanF = -0.4; leanS = Math.sin(t * 9) * 0.4; }
   const air = p.y > 0.02;
   if (p.shooting && !air) dip = 0.12; // gather
@@ -151,6 +156,17 @@ export function updateRig(p, t, dt, other) {
   } else m.ground = lerp(m.ground ?? 0, 0, ease(8));
   // defense: upper arms out, elbows bent, hands up and active
   if (m.defW > 0.01 && !reach) aimArms(m, p.group, side => { const a = Math.sin(t * 5 + side * 1.7) * 0.3; return [V(side * 0.9, -0.25 + a * 0.4, 0.3), V(side * 0.25, 0.55 + a, 0.75)]; }, m.defW);
+  // head tracks the ball (or the rim when shooting), within a natural range
+  if (m.b.head && p.lookT) {
+    p.group.updateMatrixWorld(true);
+    const loc = p.group.worldToLocal(tmpA.copy(p.lookT)); m.b.head.getWorldPosition(tmpB); p.group.worldToLocal(tmpB);
+    const dx = loc.x - tmpB.x, dy = loc.y - tmpB.y, dz = loc.z - tmpB.z;
+    const yaw = Math.max(-1.0, Math.min(1.0, Math.atan2(dx, dz))), pitch = Math.max(-0.5, Math.min(0.6, Math.atan2(dy, Math.hypot(dx, dz))));
+    const ok = dz > -0.3 ? 1 : 0.3; // don't snap around to look straight behind
+    m.hy = lerp(m.hy || 0, yaw * ok, ease(8)); m.hp = lerp(m.hp || 0, pitch * ok, ease(8));
+    turn(m.b.head, Y, m.hy * 0.65, p.group); turn(m.b.head, X, -m.hp * 0.7, p.group);
+    if (m.b.neck) { turn(m.b.neck, Y, m.hy * 0.35, p.group); turn(m.b.neck, X, -m.hp * 0.3, p.group); }
+  }
   // the game reads hand positions for the ball
   p.hands = m.mirror ? [m.b.R, m.b.L] : [m.b.L, m.b.R];
   p.handL = p.hands[0]; p.handR = p.hands[1];
