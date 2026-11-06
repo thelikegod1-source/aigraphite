@@ -348,7 +348,7 @@ export function start(root, opts) {
   function stepBall(dt) {
     if (ball.holder) {
       const pl = ball.holder; pl.group.updateMatrixWorld(true);
-      if (pl.shooting || pl.dunking || pl.y > 0) { ball.p.copy(pl.dunking ? ((pl.palms || pl.hands)[1].getWorldPosition(tmp), tmp.add(new THREE.Vector3(0, BALL_R * 0.6, 0))) : handsMid(pl)); return; }
+      if (pl.shooting || pl.dunking || pl.y > 0.02) { ball.p.copy(pl.dunking ? ((pl.palms || pl.hands)[1].getWorldPosition(tmp), tmp.add(new THREE.Vector3(0, BALL_R * 0.6, 0))) : handsMid(pl)); return; }
       if (pl.move && (pl.move.kind === "cross" || pl.move.kind === "behind" || pl.move.kind === "swap")) {
         // held in the palm → one low bounce across → caught in the other palm
         const k = Math.min(1, (t - pl.move.t0) / pl.move.dur), kind = pl.move.kind, P = pl.palms || pl.hands, from = pl.move.from;
@@ -482,7 +482,7 @@ export function start(root, opts) {
         }
       } else { input.move = null; input.steal = false; if (!GUEST) for (const pl of players) stepPlayer(pl, dt, 0, 0, false, false); } // still fall / hang during the pause
       input.wasShoot = input.shoot;
-      for (const p of players) { animatePlayer(p, t, dt, players[1 - p.team]); p.lookT = p.shooting || p.dunking ? RIM : p.hasBall ? players[1 - p.team].head.getWorldPosition(p.lookV ||= new THREE.Vector3()).setY(1.7) : ball.p; rig?.updateRig(p, t, dt, players[1 - p.team]); }
+      for (const p of players) { animatePlayer(p, t, dt, players[1 - p.team]); const o = players[1 - p.team]; p.lookT = p.shooting || p.dunking ? RIM : (p.lookV ||= new THREE.Vector3()).set(o.pos.x, 1.35, o.pos.z); // watch the man's chest, not the bouncing ball rig?.updateRig(p, t, dt, players[1 - p.team]); }
       if (!GUEST || ball.holder) stepBall(dt); else guestBall();
       if (NET && !GUEST) sendState(dt);
       if (GUEST && ball.holder) root.querySelector("#hposs").textContent = `${offense === ME ? "Your ball" : "Defense"} · ${Math.max(0, Math.ceil(possClock))}`;
@@ -591,7 +591,7 @@ export function start(root, opts) {
     const k = 1 - Math.exp(-dt * 18);
     snap.P.forEach((a, i) => {
       const p = players[i];
-      p.pos.x += (a[0] - p.pos.x) * k; p.pos.z += (a[1] - p.pos.z) * k; p.y += (a[2] - p.y) * k; p.vel.set(a[3], 0, a[4]);
+      p.pos.x += (a[0] - p.pos.x) * k; p.pos.z += (a[1] - p.pos.z) * k; p.y = a[2] <= 0.001 && p.y < 0.03 ? 0 : p.y + (a[2] - p.y) * k; // land exactly p.vel.set(a[3], 0, a[4]);
       p.facing += Math.atan2(Math.sin(a[5] - p.facing), Math.cos(a[5] - p.facing)) * k;
       p.hasBall = !!(a[6] & 1); p.shooting = !!(a[6] & 2); p.dunking = !!(a[6] & 4); p.hand = a[7]; p.spinDir = a[16];
       p.move = a[8] ? { kind: a[8], dur: MOVES[a[8]].dur, t0: t - a[9] * MOVES[a[8]].dur, from: a[10] } : null;

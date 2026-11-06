@@ -278,7 +278,8 @@ export function updateRig(p, t, dt, other) {
   // bank into turns while moving
   const fr = m.prevFacing == null ? 0 : Math.atan2(Math.sin(p.facing - m.prevFacing), Math.cos(p.facing - m.prevFacing)) / Math.max(dt, 1e-3);
   m.prevFacing = p.facing;
-  if (dt > 0) leanS += Math.max(-0.3, Math.min(0.3, fr * 0.07 * speed)) * BANK;
+  if (dt > 0) m.frS = lerp(m.frS || 0, Math.max(-6, Math.min(6, fr)), ease(5));
+  if (p.hasBall && !def && speed > 0.5) leanS += Math.max(-0.15, Math.min(0.15, (m.frS || 0) * 0.04 * speed)) * BANK; // gentle bank into turns only when running with the ball
   if (p.stumble > t) { leanF = -0.4; leanS = Math.sin(t * 4) * 0.22; }
   const air = p.y > 0.02;
   if (p.shooting && !air) dip = 0.12; // gather
@@ -385,9 +386,9 @@ export function updateRig(p, t, dt, other) {
     p.group.updateMatrixWorld(true);
     const loc = p.group.worldToLocal(tmpA.copy(p.lookT)); m.b.head.getWorldPosition(tmpB); p.group.worldToLocal(tmpB);
     const dx = loc.x - tmpB.x, dy = loc.y - tmpB.y, dz = loc.z - tmpB.z;
-    const yaw = Math.max(-1.0, Math.min(1.0, Math.atan2(dx, dz))), pitch = Math.max(-0.5, Math.min(0.6, Math.atan2(dy, Math.hypot(dx, dz))));
+    const yaw = Math.max(-0.6, Math.min(0.6, Math.atan2(dx, dz))), pitch = Math.max(-0.35, Math.min(0.4, Math.atan2(dy, Math.hypot(dx, dz))));
     const ok = dz > -0.3 ? 1 : 0.3; // don't snap around to look straight behind
-    m.hy = lerp(m.hy || 0, yaw * ok, ease(8)); m.hp = lerp(m.hp || 0, pitch * ok, ease(8));
+    m.hy = lerp(m.hy || 0, yaw * ok, ease(5)); m.hp = lerp(m.hp || 0, pitch * ok, ease(5));
     turn(m, m.b.head, Y, m.hy * 0.65); turn(m, m.b.head, X, -m.hp * 0.7);
     if (m.b.neck) { turn(m, m.b.neck, Y, m.hy * 0.35); turn(m, m.b.neck, X, -m.hp * 0.3); }
   }
