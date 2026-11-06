@@ -8,6 +8,15 @@ import { buildArena, buildProHoop, addAtmosphere } from "./arena3d.js";
 const RIM = new THREE.Vector3(0, 3.05, 0), RIM_R = 0.23, BALL_R = 0.12, BOARD_Z = -0.38;
 const ARC = 6.75, GRAV = 9.8, TO_WIN = 15, COURT_X = 7.5, COURT_Z = 13.5;
 const SPEED = 5.2, JUMP_V = 6.0, METER_TIME = 0.56, GREEN_C = 0.86;
+// ---- shot tuning (real jump shots: ~0.5-0.7 m off the floor, release at the top, ~40-50 deg into the rim) ----
+const SHOT = {
+  GATHER: 0.11,        // s: dip before leaving the floor (anticipation)
+  JUMP_V: 3.6,         // m/s takeoff -> ~0.66 m vertical; apex lands at GATHER + JUMP_V/g = 0.48 s = the green window
+  ENTRY_NEAR: 47,      // deg: entry angle at the rim on short shots (higher arc)
+  ENTRY_FAR: 43,       // deg: entry angle from deep (flatter, faster)
+  BACKSPIN: 2.4,       // revolutions per second
+};
+const BLOCK_V = 4.2;   // m/s -> ~0.9 m contest jump
 const MOVES = { swap: { key: "", label: "", dur: 0.4, burst: 0, hidden: true }, hop: { key: "", label: "", dur: 0.42, burst: 3.6, hidden: true }, cross: { key: "KeyQ", label: "Cross", dur: 0.58, burst: 5.0 }, behind: { key: "KeyX", label: "Behind", dur: 0.78, burst: 0 },
   spin: { key: "KeyF", label: "Spin", dur: 0.65, burst: 4.2 }, stepback: { key: "KeyC", label: "Step back", dur: 0.48, burst: 4.0 } };
 
@@ -159,8 +168,8 @@ export function start(root, opts) {
     const err = green ? (smother ? 0.3 + contest * 0.25 : risky ? 0.17 + contest * 0.1 : 0.012) : 0.03 + (1 - quality) * 0.26 + d * 0.006 + contest * 0.18 + Math.abs(Math.random() + Math.random() - 1) * 0.05;
     if (pl.team === ME || NET) say(pl.team, { fb: green && smother ? ["GREEN · SMOTHERED", "r"] : green && risky ? ["GREEN · CONTESTED", "r"] : green ? ["GREEN!", "g"] : [m < GREEN_C ? (off > .2 ? "VERY EARLY" : "SLIGHTLY EARLY") : (off > .12 ? "VERY LATE" : "SLIGHTLY LATE"), "r"] });
     const a = Math.random() * Math.PI * 2, target = RIM.clone().add(new THREE.Vector3(Math.cos(a) * err, 0.02, Math.sin(a) * err + 0.02));
-    const T = 0.75 + d * 0.06, v = target.clone().sub(from).add(new THREE.Vector3(0, 0.5 * GRAV * T * T, 0)).divideScalar(T);
-    ball.p.copy(from); ball.v.copy(v); ball.holder = null; pl.hasBall = false; ball.cool = 0.35; pl.released = t;
+    const v = shotVelocity(from, target, d);
+    ball.p.copy(from); ball.v.copy(v); setBackspin(v); ball.holder = null; pl.hasBall = false; ball.cool = 0.35; pl.released = t;
     ball.shot = { team: pl.team, value: d > ARC ? 2 : 1, t0: t };
     if (contest > 0.62) say(def.team, { m: ["SMOTHERED", 900], bz: 20 });
     pl.shooting = false; pl.meter = 0; tone(330, .06, "triangle", .08);
@@ -248,10 +257,10 @@ export function start(root, opts) {
         pl.move = { kind: "hop", t0: t, dur: 0.42, dir, from: pl.hand }; pl.moveCool = t + 0.6; pl.vy = 2.6; pl.space = t + 1.4; pl.hopT = t;
         tone(300, .05, "triangle", .07); say(pl.team, { m: ["HOP BACK", 600] });
       } else if (pl.hasBall && distToRim(pl.pos) < 1.9) { pl.dunkStyle = Math.random() * 4 | 0; pl.vy = JUMP_V * 1.15; pl.dunking = true; pl.shooting = true; pl.meter = 0; pl.shotT = t; }
-      else if (pl.hasBall) { pl.shooting = true; pl.meter = 0; pl.shotT = t; pl.move = null; pl.jumpAt = t + 0.07; } // gather, then rise
-      else { pl.vy = JUMP_V * 0.9; pl.blockT = t; } // E on defense: jump / block
+      else if (pl.hasBall) { pl.shooting = true; pl.meter = 0; pl.shotT = t; pl.move = null; pl.jumpAt = t + SHOT.GATHER; } // gather, then rise
+      else { pl.vy = BLOCK_V; pl.blockT = t; } // E on defense: jump / block
     }
-    if (pl.jumpAt && t >= pl.jumpAt) { pl.vy = JUMP_V; pl.jumpAt = 0; }
+    if (pl.jumpAt && t >= pl.jumpAt) { pl.vy = SHOT.JUMP_V; pl.jumpAt = 0; }
     if (pl.hang > t) { pl.y = RIM.y - 2.15; pl.vy = 0; pl.vel.set(0, 0, 0); pl.pos.x += (RIM.x - pl.pos.x) * 0.3; pl.pos.z += (RIM.z + 0.42 - pl.pos.z) * 0.3; }
     else if (!ground || pl.vy > 0) { pl.vy -= GRAV * dt; pl.y = Math.max(0, pl.y + pl.vy * dt); if (pl.y === 0) { pl.vy = 0; if (!pl.hasBall) pl.shooting = false; pl.dunking = false; } }
     if (pl.dunking && pl.hasBall) {
@@ -272,7 +281,18 @@ export function start(root, opts) {
       : pl.hasBall || pl.shooting ? Math.atan2(RIM.x - pl.pos.x, RIM.z - pl.pos.z) : faceO;
     pl.facing += Math.atan2(Math.sin(face - pl.facing), Math.cos(face - pl.facing)) * (1 - Math.exp(-dt * 9));
   }
-  function handsMid(pl) { pl.group.updateMatrixWorld(true); pl.handL.getWorldPosition(tmp); pl.handR.getWorldPosition(tmp2); return tmp.clone().add(tmp2).multiplyScalar(0.5).add(new THREE.Vector3(0, 0.12, 0)); }
+  // ball between the palms (set point / layup), just above them
+  function handsMid(pl) { pl.group.updateMatrixWorld(true); const P = pl.palms || pl.hands; P[0].getWorldPosition(tmp); P[1].getWorldPosition(tmp2); return tmp.clone().add(tmp2).multiplyScalar(0.5).add(new THREE.Vector3(0, BALL_R * 0.8, 0)); }
+  // launch velocity that brings the ball into the target at a real entry angle (steeper close, flatter from deep)
+  function shotVelocity(from, target, d) {
+    const dx = target.x - from.x, dz = target.z - from.z, dh = Math.hypot(dx, dz) || 0.01, dy = target.y - from.y;
+    const ent = THREE.MathUtils.degToRad(THREE.MathUtils.lerp(SHOT.ENTRY_NEAR, SHOT.ENTRY_FAR, Math.min(1, Math.max(0, (d - 1.5) / 6))));
+    const T = Math.sqrt(Math.max(0.09, 2 * (dy + dh * Math.tan(ent)) / GRAV)); // time of flight for that entry angle
+    return new THREE.Vector3(dx / T, dy / T + 0.5 * GRAV * T, dz / T);
+  }
+  // clean backspin: spin around the axis perpendicular to the flight, rolling back toward the shooter
+  const spinAxis = new THREE.Vector3(1, 0, 0), spinQ = new THREE.Quaternion();
+  function setBackspin(v) { spinAxis.set(-v.z, 0, v.x).normalize(); ball.spinRate = SHOT.BACKSPIN * Math.PI * 2; } // axis = flight x up: top of the ball rolls back toward the shooter
   function stepBall(dt) {
     if (ball.holder) {
       const pl = ball.holder; pl.group.updateMatrixWorld(true);
@@ -331,7 +351,8 @@ export function start(root, opts) {
         }
       }
     }
-    const prevY = ball.p.y; ball.p.addScaledVector(ball.v, dt); ball.p.y -= 0.5 * GRAV * dt * dt; ball.v.y -= GRAV * dt; ball.spin += dt * 8;
+    const prevY = ball.p.y; ball.p.addScaledVector(ball.v, dt); ball.p.y -= 0.5 * GRAV * dt * dt; ball.v.y -= GRAV * dt;
+    if (ball.spinRate) ballMesh.quaternion.premultiply(spinQ.setFromAxisAngle(spinAxis, ball.spinRate * dt)); else ball.spin += dt * 8;
     if (ball.p.z - BALL_R < BOARD_Z && ball.p.z > BOARD_Z - 0.3 && Math.abs(ball.p.x) < 0.9 && ball.p.y > 2.9 && ball.p.y < 4.0) { ball.p.z = BOARD_Z + BALL_R; ball.v.z = Math.abs(ball.v.z) * 0.6; tone(220, .04, "square", .05); }
     const rel = new THREE.Vector3(ball.p.x - RIM.x, 0, ball.p.z - RIM.z), rl = rel.length() || 1e-6;
     const closest = new THREE.Vector3(RIM.x + rel.x / rl * RIM_R, RIM.y, RIM.z + rel.z / rl * RIM_R), n = ball.p.clone().sub(closest), nd = n.length();
@@ -422,12 +443,12 @@ export function start(root, opts) {
         if (possClock <= 0) { turnover(1 - offense, "SHOT CLOCK!"); tone(180, .4, "sawtooth", .15); }
       }
     }
-    ballMesh.position.copy(ball.p); ballMesh.rotation.set(ball.spin, ball.spin * .7, 0);
+    ballMesh.position.copy(ball.p); if (!ball.spinRate || ball.holder) { ball.spinRate = 0; ballMesh.rotation.set(ball.spin, ball.spin * .7, 0); }
     const me = players[ME]; ring.position.set(me.pos.x, 0.02, me.pos.z); ring.material.opacity = 0.65 + Math.sin(t * 6) * 0.25; ring.scale.setScalar(me.hasBall ? 1.1 : 1);
     // shot arc preview
     arcDots.visible = me.hasBall && me.shooting && !me.dunking;
     if (arcDots.visible) {
-      const from = handsMid(me), d = distToRim(me.pos), T = 0.75 + d * 0.06, v = RIM.clone().sub(from).add(new THREE.Vector3(0, 0.5 * GRAV * T * T, 0)).divideScalar(T);
+      const from = handsMid(me), d = distToRim(me.pos), v = shotVelocity(from, RIM, d), T = Math.hypot(RIM.x - from.x, RIM.z - from.z) / Math.hypot(v.x, v.z);
       arcDots.children.forEach((dot, i) => { const s = (i + 1) / arcDots.children.length * T; dot.position.set(from.x + v.x * s, from.y + v.y * s - 0.5 * GRAV * s * s, from.z + v.z * s); });
     }
     // shot meter next to your player, with the green window
