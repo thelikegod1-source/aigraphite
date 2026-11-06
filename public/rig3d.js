@@ -243,10 +243,10 @@ export function updateRig(p, t, dt, other) {
   // pick clips for the arms (U) and the legs (L), then fade weights so each half always adds up to 1
   const def = !p.hasBall && other.hasBall, A = m.actions, W = {};
   const walkW = Math.min(1, speed / 0.35) * (1 - Math.max(0, (speed - 0.45) / 0.35)), runW = Math.max(0, Math.min(1, (speed - 0.45) / 0.35));
-  const moving = Math.min(1, walkW + runW), base = def ? "defense" : "idle";
-  if (def) W.defenseL = 1; // defense: legs stay in stance; the shuffle is procedural (below), never a forward run cycle
+  const moving = Math.min(1, walkW + runW), base = "idle"; // defense = upright body + procedural stance/shuffle/arms (the old 'sneak' pose clip twisted and hunched him)
+  if (def) W.idleL = 1; // defense: legs come from the idle base, bent into a stance + shuffled procedurally (never a run cycle)
   else { W[base + "L"] = 1 - moving; W.walkL = walkW; W.runL = runW; }
-  if (def) W[base + "U"] = 1; else { W.idleU = 1 - moving; W.walkU = walkW; W.runU = runW; }
+  if (def) W.idleU = 1; else { W.idleU = 1 - moving; W.walkU = walkW; W.runU = runW; }
   for (const k in A) { const tw = W[k] || 0; m.w[k] = lerp(m.w[k] ?? 0, tw, ease(9)); }
   // keep each half summing to 1 so the body never falls back to a T-pose
   for (const half of ["U", "L"]) {
@@ -266,7 +266,7 @@ export function updateRig(p, t, dt, other) {
   p.dribU = ((p.dribU ?? 0) + dt * (DRIB.HZ_STAND + (DRIB.HZ_RUN - DRIB.HZ_STAND) * speed)) % 1;
   m.mixer.update(dt);
   // body: dip and lean into moves, sit down on defense, lean back on step backs
-  let dip = def ? 0.07 : p.hasBall ? DRIB.CROUCH : 0, leanF = def ? 0.22 : p.hasBall ? DRIB.LEAN : speed * 0.15, leanS = 0, twist = 0; // (the run clip already leans into the sprint)
+  let dip = def ? 0.07 : p.hasBall ? DRIB.CROUCH : 0, leanF = def ? 0.1 : p.hasBall ? DRIB.LEAN : speed * 0.15, leanS = 0, twist = 0; // (the run clip already leans into the sprint)
   if (mv?.kind === "behind") { // from a recording: sit low and wide, hips turn to the ball side
     const sFrom = mv.from === 1 ? -1 : 1; dip = 0.13 * Math.min(1, arc * 1.6); leanF += 0.18 * arc; twist = sFrom * 0.55 * arc;
   } else if (mv?.kind === "cross") { // escape: deep plant, hips and shoulders sway from the ball side to the new side
