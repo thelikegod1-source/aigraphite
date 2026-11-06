@@ -1,2 +1,3 @@
-Player body: "Male Base Mesh" by orange-juice-games (CC0), via github.com/BoQsc/Godot-Male-Base-Mesh.
-Smoothed, sculpted (muscles, face) and rigged in-house with tools/autorig.mjs.
+Players: generated with MPFB / MakeHuman (makehumancommunity.org) using the CC0 "makehuman_system_assets" pack
+(skins, eyes, eyebrows, eyelashes, hair, shoes), MakeHuman Mixamo-compatible rig. Jersey/shorts/numbers added in code.
+Ball textures: provided by the site owner.
