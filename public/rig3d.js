@@ -271,7 +271,7 @@ export function updateRig(p, t, dt, other) {
     const sFrom = mv.from === 1 ? -1 : 1; dip = 0.13 * Math.min(1, arc * 1.6); leanF += 0.18 * arc; twist = sFrom * 0.55 * arc;
   } else if (mv?.kind === "cross") { // escape: deep plant, hips and shoulders sway from the ball side to the new side
     const sFrom = mv.from === 1 ? -1 : 1, sw = mk * mk * (3 - 2 * mk);
-    dip = 0.14 * Math.sin(Math.PI * Math.min(1, mk * 1.2)); leanF += 0.2 * arc; twist = sFrom * 0.35 * (1 - 2 * sw); leanS = sFrom * 0.28 * (1 - 2 * sw);
+    dip = 0.2 * Math.sin(Math.PI * Math.min(1, mk * 1.15)); leanF += 0.16 * arc; twist = sFrom * 0.35 * (1 - 2 * sw); leanS = sFrom * 0.28 * (1 - 2 * sw);
   } else if (false) { const sgn = p.hand ? -1 : 1; dip = 0.1 * arc; leanF += 0.25 * arc; leanS = sgn * 0.35 * arc; twist = sgn * 0.4 * arc; }
   else if (mv?.kind === "spin") { dip = 0.1; leanF = 0.12; }
   else if (mv?.kind === "stepback" || mv?.kind === "hop") { leanF = -0.35 * arc; dip = -0.08 * arc; }
@@ -335,7 +335,7 @@ export function updateRig(p, t, dt, other) {
     const sFrom = mv.from === 1 ? -1 : 1, k = mk, sm = x => x * x * (3 - 2 * x);
     const push = sm(Math.min(1, k / 0.28)) * (1 - sm(Math.max(0, Math.min(1, (k - 0.28) / 0.25))));
     const catchK = sm(Math.max(0, Math.min(1, (k - 0.45) / 0.25))) * (1 - sm(Math.max(0, (k - 0.85) / 0.15)));
-    const big = mv.kind === "cross" ? 1 : 0.6;
+    const big = mv.kind === "cross" ? 1.45 : 0.6;
     aimArms(m, p.group, side => side === sFrom
       ? (push > 0.01 ? [V(side * 0.6 * big, -0.75, 0.3), V(side * 0.35 * big, -0.7, 0.6)] : null)
       : (catchK > 0.01 ? [V(side * 0.55 * big, -0.75, 0.35), V(-side * 0.1, -0.6, 0.8)] : null),
@@ -349,11 +349,11 @@ export function updateRig(p, t, dt, other) {
   // dunks: lead knee drives up, back leg trails; otherwise a light tuck
   if (m.airW > 0.01) aimLegs(m, p.group, m.airW, p.dunking || hang ? (hang ? () => [0.1, 0.15, 0.05] : side => side > 0 ? [1.1, 1.3, 0.05] : [-0.25, 0.7, 0.05]) : undefined);
   // crouch with real knee bend (defense stance, gathers, landings, moves), wider base on D
-  const bend = Math.min(1, m.dip / 0.12), stanceW = (1 - m.airW) * (1 - Math.min(1, speed * 1.4) * 0.75);
+  const bend = Math.min(1, m.dip / 0.12), stanceW = (1 - m.airW) * (mv?.kind === "cross" || mv?.kind === "behind" ? 1 : 1 - Math.min(1, speed * 1.4) * 0.75); // escapes keep the wide sit while sliding
   m.defLeg = lerp(m.defLeg || 0, def ? 1 : 0, ease(6));
   if (!({}).legs && stanceW > 0.01 && (bend > 0.02 || m.defLeg > 0.02)) {
     const c = Math.max(bend, m.defLeg * 0.85);
-    aimLegs(m, p.group, stanceW, () => [0.15 + 0.6 * c, 0.1 + 0.55 * c, 0.12 + 0.28 * Math.max(m.defLeg, mv?.kind === "behind" ? arc : 0)]);
+    aimLegs(m, p.group, stanceW, () => [0.15 + 0.6 * c, 0.1 + 0.55 * c, 0.12 + 0.28 * Math.max(m.defLeg, mv?.kind === "behind" ? arc : 0) + (mv?.kind === "cross" ? 0.32 * Math.min(1, arc * 1.6) : 0)]);
   }
   // defensive shuffle: steps synced to ground distance (no skating), lead foot reaches, trail foot closes,
   // forward/back motion becomes short choppy steps; feet never cross
