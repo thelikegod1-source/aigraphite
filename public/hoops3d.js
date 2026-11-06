@@ -17,7 +17,14 @@ const SHOT = {
   ENTRY_FAR: 43,       // deg: entry angle from deep (flatter, faster)
   BACKSPIN: 2.4,       // revolutions per second
 };
-const BLOCK_V = 4.2;   // m/s -> ~0.9 m contest jump
+const BLOCK_V = 4.2;
+// ---- behind-the-back escape (glide back + to the new hand side while the ball wraps) ----
+const BTB = {
+  GLIDE: 2.7,   // m/s peak glide speed (~1.4 m total over the move)
+  BACK: 0.78,   // share of the glide that goes away from the hoop
+  SIDE: 0.62,   // share toward the new ball-hand side
+  STEER_AT: 0.72, // move progress after which your stick takes over (run out of it)
+};   // m/s -> ~0.9 m contest jump
 const MOVES = { swap: { key: "", label: "", dur: 0.4, burst: 0, hidden: true }, hop: { key: "", label: "", dur: 0.42, burst: 3.6, hidden: true }, cross: { key: "KeyQ", label: "Cross", dur: 0.58, burst: 5.0 }, behind: { key: "KeyX", label: "Behind", dur: 0.78, burst: 0 },
   spin: { key: "KeyF", label: "Spin", dur: 0.65, burst: 4.2 }, stepback: { key: "KeyC", label: "Step back", dur: 0.48, burst: 4.0 } };
 
@@ -195,7 +202,7 @@ export function start(root, opts) {
     const M = MOVES[kind], fwd = fwdOf(pl), side = new THREE.Vector3(fwd.z, 0, -fwd.x);
     let dir;
     if (kind === "cross") { pl.hand = 1 - pl.hand; dir = side.clone().multiplyScalar(pl.hand ? -1 : 1).addScaledVector(fwd, 0.35); }
-    else if (kind === "behind") { pl.hand = 1 - pl.hand; dir = side.clone().multiplyScalar(pl.hand ? -0.8 : 0.8).addScaledVector(fwd, 0.6); }
+    else if (kind === "behind") { pl.hand = 1 - pl.hand; const away = flat(pl.pos).sub(flat(RIM)).normalize(); dir = away.multiplyScalar(BTB.BACK).addScaledVector(side, (pl.hand ? -1 : 1) * BTB.SIDE); }
     else if (kind === "spin") { const s = Math.random() < .5 ? 1 : -1; pl.spinDir = s; dir = fwd.clone().addScaledVector(side, s * 0.8); }
     else { dir = fwd.clone().multiplyScalar(-1); pl.space = t + 1.4; }
     pl.move = { kind, t0: t, dur: M.dur, dir: dir.normalize(), from: kind === "cross" || kind === "behind" ? 1 - pl.hand : pl.hand }; pl.moveCool = t + M.dur + 0.25;
@@ -231,7 +238,12 @@ export function start(root, opts) {
     if (pl.move) {
       const k = (t - pl.move.t0) / pl.move.dur, kind = pl.move.kind;
       if (k >= 1) { pl.move = null; steer = true; }
-      else if (kind === "behind") { if (k < 0.55) pl.vel.multiplyScalar(0.75); else steer = true; } // plant for the wrap, then run out of it
+      else if (kind === "behind") { // smooth glide: eases in, carries through the wrap, eases out; then you can steer out of it
+        const bell = Math.sin(Math.PI * Math.min(1, k / 0.95)) ** 1.5;
+        const glide = pl.move.dir.clone().multiplyScalar(BTB.GLIDE * bell);
+        if (k < BTB.STEER_AT) pl.vel.lerp(glide, 1 - Math.exp(-dt * 14));
+        else { steer = want.lengthSq() > 0.05; if (!steer) pl.vel.lerp(glide, 1 - Math.exp(-dt * 14)); }
+      }
       else if (kind === "swap") steer = true; // hand switch on the move: keep going
       else if (kind === "cross") { // escape: plant low while the ball sweeps across, then explode out the other way
         if (k < 0.45) pl.vel.multiplyScalar(0.8);
@@ -274,7 +286,7 @@ export function start(root, opts) {
     // facing: toward motion, or the hoop when shooting / holding
     // defenders always square up to the ball handler and slide (no flipping between run direction and the man)
     const toO = flat(o.pos).sub(flat(pl.pos)), faceO = toO.lengthSq() > 0.09 ? Math.atan2(toO.x, toO.z) : pl.facing;
-    const face = pl.move?.kind === "stepback" || pl.move?.kind === "hop" ? Math.atan2(RIM.x - pl.pos.x, RIM.z - pl.pos.z)
+    const face = pl.move?.kind === "stepback" || pl.move?.kind === "hop" || pl.move?.kind === "behind" ? Math.atan2(RIM.x - pl.pos.x, RIM.z - pl.pos.z)
       : !pl.hasBall && o.hasBall ? faceO
       : pl.vel.lengthSq() > 0.3 && !pl.shooting ? Math.atan2(pl.vel.x, pl.vel.z)
       : pl.hasBall || pl.shooting ? Math.atan2(RIM.x - pl.pos.x, RIM.z - pl.pos.z) : faceO;
