@@ -2,6 +2,7 @@
 // Move with the joystick/WASD. Hold Shoot (E or Space) and let go in the green window of the meter.
 // Dribble moves: Q crossover, X behind the back, F spin, C step back. Beyond the arc = 2, inside = 1. First to 15.
 import * as THREE from "./vendor/three.module.min.js";
+import { mergeGeometries } from "./vendor/BufferGeometryUtils.js";
 
 const RIM = new THREE.Vector3(0, 3.05, 0), RIM_R = 0.23, BALL_R = 0.12, BOARD_Z = -0.38;
 const ARC = 6.75, GRAV = 9.8, TO_WIN = 15, COURT_X = 7.5, COURT_Z = 13.5;
@@ -688,6 +689,19 @@ function skyTexture() {
   return canvasTex(16, 256, (x, w, h) => { const g = x.createLinearGradient(0, 0, 0, h); g.addColorStop(0, "#4a6fa5"); g.addColorStop(.45, "#e8a46b"); g.addColorStop(.7, "#f6c48a"); g.addColorStop(1, "#f6c48a"); x.fillStyle = g; x.fillRect(0, 0, w, h); });
 }
 // sphere UV'd like the ball texture: each half projected onto its own disc (left column of the image)
+function netGeometry() {
+  const N = 12, ROWS = 6, DEPTH = 0.44, parts = [], up = new THREE.Vector3(0, 1, 0);
+  const pt = (i, j) => { const k = j / ROWS, r = RIM_R - 0.006 - (RIM_R - 0.125) * Math.pow(k, 0.85), a = (i + (j % 2) * 0.5) / N * Math.PI * 2;
+    return new THREE.Vector3(Math.cos(a) * r, -DEPTH * k - 0.03 * Math.sin(Math.PI * k), Math.sin(a) * r); };
+  const strand = (a, b) => { const d = b.clone().sub(a), len = d.length(), c = new THREE.CylinderGeometry(0.0042, 0.0042, len, 5, 1, true);
+    c.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(up, d.normalize())); c.translate((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2); parts.push(c); };
+  for (let j = 0; j < ROWS; j++) for (let i = 0; i < N; i++) {
+    const p = pt(i, j), off = j % 2 ? 1 : 0; // alternate rows sit half a step over, so pairs of strings make diamonds
+    strand(p, pt(i + off, j + 1)); strand(p, pt(i + off - 1, j + 1));
+  }
+  for (let i = 0; i < N; i++) strand(pt(i, ROWS), pt(i + 1, ROWS)); // bottom hem
+  return mergeGeometries(parts);
+}
 function ballGeometry(r) {
   const g = new THREE.SphereGeometry(r, 48, 32), p = g.attributes.position, uv = g.attributes.uv;
   const U = 0.2536, VT = 1 - 0.2526, VB = 1 - 0.748, R = 0.229;
@@ -764,6 +778,7 @@ function buildHoop(scene) {
   const square = new THREE.Mesh(new THREE.PlaneGeometry(.59, .45), new THREE.MeshBasicMaterial({ color: 0xd23b3b, wireframe: true })); square.position.set(0, 3.3, BOARD_Z + .001); scene.add(square);
   const rim = new THREE.Mesh(new THREE.TorusGeometry(RIM_R, .018, 8, 32), new THREE.MeshStandardMaterial({ color: 0xff5a1f, roughness: .4, metalness: .3 }));
   rim.name = "rim"; rim.rotation.x = Math.PI / 2; rim.position.copy(RIM); rim.castShadow = true; scene.add(rim);
-  const net = new THREE.Mesh(new THREE.CylinderGeometry(RIM_R, RIM_R * .6, .42, 16, 3, true), new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity: .7 }));
-  net.position.set(RIM.x, RIM.y - .21, RIM.z); net.name = "net"; scene.add(net);
+  // net: woven diamond strings hanging from the rim, tapering in; hangs from its top so the swish stretches it down
+  const net = new THREE.Mesh(netGeometry(), new THREE.MeshStandardMaterial({ color: 0xf4f4f0, roughness: 0.9 }));
+  net.position.set(RIM.x, RIM.y - 0.01, RIM.z); net.name = "net"; net.castShadow = true; scene.add(net);
 }
