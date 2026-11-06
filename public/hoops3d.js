@@ -60,7 +60,15 @@ export function start(root, opts) {
     .catch(e => console.warn("rig", e));
   const ring = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.72, 48), new THREE.MeshBasicMaterial({ color: 0xffd23a, transparent: true, opacity: 0.9 }));
   ring.rotation.x = -Math.PI / 2; ring.position.y = 0.02; scene.add(ring);
-  const ballMesh = new THREE.Mesh(new THREE.SphereGeometry(BALL_R, 24, 16), new THREE.MeshStandardMaterial({ map: ballTexture(), roughness: 0.7 }));
+  // real ball: textured leather (color + pebble/groove normals + roughness); falls back to the drawn one
+  const ballMat = new THREE.MeshStandardMaterial({ map: ballTexture(), roughness: 0.7 });
+  const ballMesh = new THREE.Mesh(ballGeometry(BALL_R), ballMat);
+  {
+    const tl = new THREE.TextureLoader(), ld = (f, srgb) => tl.load("./models/" + f, t => { if (srgb) t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; ballMat.needsUpdate = true; });
+    const map = ld("ball_color.jpg", true);
+    ballMat.map = map; ballMat.normalMap = ld("ball_normal.jpg"); ballMat.normalScale.set(1.2, 1.2);
+    ballMat.roughnessMap = ld("ball_rough.jpg"); ballMat.roughness = 1;
+  }
   ballMesh.castShadow = true; scene.add(ballMesh);
   const arcDots = new THREE.Group(); scene.add(arcDots);
   for (let i = 0; i < 18; i++) arcDots.add(new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 })));
@@ -678,6 +686,29 @@ function flatLen(v) { return Math.hypot(v.x, v.z); }
 function canvasTex(w, h, draw) { const c = document.createElement("canvas"); c.width = w; c.height = h; draw(c.getContext("2d"), w, h); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t; }
 function skyTexture() {
   return canvasTex(16, 256, (x, w, h) => { const g = x.createLinearGradient(0, 0, 0, h); g.addColorStop(0, "#4a6fa5"); g.addColorStop(.45, "#e8a46b"); g.addColorStop(.7, "#f6c48a"); g.addColorStop(1, "#f6c48a"); x.fillStyle = g; x.fillRect(0, 0, w, h); });
+}
+// sphere UV'd like the ball texture: each half projected onto its own disc (left column of the image)
+function ballGeometry(r) {
+  const g = new THREE.SphereGeometry(r, 48, 32), p = g.attributes.position, uv = g.attributes.uv;
+  const U = 0.2536, VT = 1 - 0.2526, VB = 1 - 0.748, R = 0.229;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i) / r, y = p.getY(i) / r, z = p.getZ(i) / r;
+    if (x >= 0) uv.setXY(i, U + z * R, VT + y * R); else uv.setXY(i, U - z * R, VB + y * R);
+  }
+  // split triangles that straddle the two halves so the texture doesn't smear across the seam
+  return g.toNonIndexed ? fixSeam(g.toNonIndexed(), r) : g;
+}
+function fixSeam(g, r) {
+  const p = g.attributes.position, uv = g.attributes.uv;
+  for (let t = 0; t < p.count; t += 3) {
+    let pos = 0; for (let k = 0; k < 3; k++) if (p.getX(t + k) >= 0) pos++;
+    if (pos === 0 || pos === 3) continue;
+    const side = pos >= 2 ? 1 : -1; // put the whole triangle on the majority half
+    for (let k = 0; k < 3; k++) { const i = t + k, y = p.getY(i) / r, z = p.getZ(i) / r;
+      if (side > 0) uv.setXY(i, 0.2536 + z * 0.229, (1 - 0.2526) + y * 0.229); else uv.setXY(i, 0.2536 - z * 0.229, (1 - 0.748) + y * 0.229); }
+  }
+  const n = new Float32Array(p.count * 3); for (let i = 0; i < p.count; i++) { const v = new THREE.Vector3(p.getX(i), p.getY(i), p.getZ(i)).normalize(); n.set([v.x, v.y, v.z], i * 3); }
+  g.setAttribute("normal", new THREE.BufferAttribute(n, 3)); return g; // smooth, not faceted
 }
 function ballTexture() {
   return canvasTex(256, 128, (x, w, h) => { x.fillStyle = "#e0701a"; x.fillRect(0, 0, w, h); x.strokeStyle = "#2a1200"; x.lineWidth = 5;
