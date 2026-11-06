@@ -3,6 +3,7 @@
 // Dribble moves: Q crossover, X behind the back, F spin, C step back. Beyond the arc = 2, inside = 1. First to 15.
 import * as THREE from "./vendor/three.module.min.js";
 import { mergeGeometries } from "./vendor/BufferGeometryUtils.js";
+import { buildArena, buildProHoop, addAtmosphere } from "./arena3d.js";
 
 const RIM = new THREE.Vector3(0, 3.05, 0), RIM_R = 0.23, BALL_R = 0.12, BOARD_Z = -0.38;
 const ARC = 6.75, GRAV = 9.8, TO_WIN = 15, COURT_X = 7.5, COURT_Z = 13.5;
@@ -43,12 +44,12 @@ export function start(root, opts) {
   renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
   wrap.prepend(renderer.domElement);
   const scene = new THREE.Scene();
-  scene.background = skyTexture(); scene.fog = new THREE.Fog(0xe9b98a, 30, 80);
+
   const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 200);
-  scene.add(new THREE.HemisphereLight(0xffe2b8, 0x3a2a20, 0.9));
-  const sun = new THREE.DirectionalLight(0xffc98a, 2.2); sun.position.set(-12, 18, 10); sun.castShadow = true;
-  sun.shadow.mapSize.set(1024, 1024); Object.assign(sun.shadow.camera, { left: -16, right: 16, top: 16, bottom: -16, near: 1, far: 60 }); scene.add(sun);
-  buildCourt(scene); buildCity(scene); buildHoop(scene);
+  // indoor arena: hardwood, stands + crowd, jumbotron, LED boards, arena lights, pro hoop
+  const arena = buildArena(scene, renderer, { arc: ARC });
+  const hoop = buildProHoop(scene, { RIM, RIM_R, BOARD_Z, netGeometry });
+  addAtmosphere(wrap); arena.setScore(0, 0, names[0], names[1]);
 
   // ---------- players + ball ----------
   const kits = [{ jersey: 0x2f62d8, trim: 0xffffff, shorts: 0x1d3f99, skin: 0xc8916a, hair: 0x1a120c, num: "1" },
@@ -177,6 +178,7 @@ export function start(root, opts) {
     root.querySelector("#hs0").textContent = score[0]; root.querySelector("#hs1").textContent = score[1]; netSwish = t;
     msg(dunked ? "DUNK! +1" : val === 2 ? "+2 FROM DEEP" : "+1", 1200);
     (team === ME ? SFX.roundWin : SFX.roundLoss)(); buzz(30);
+    arena.setScore(score[0], score[1], names[0], names[1], dunked ? "DUNK!" : val === 2 ? "FROM DEEP" : ""); arena.cheer();
   }
   function turnover(to, why) { msg(toText(to, why), 900); NET?.send({ to: [to, why] }); pause = 0.9; setTimeout(() => !over && setupPossession(to), 800); }
   function doMove(pl, kind) {
@@ -442,6 +444,8 @@ export function start(root, opts) {
     const rs = t - rimShake; if (rimMesh) rimMesh.rotation.x = Math.PI / 2 + (rs < 0.5 ? Math.sin(rs * 40) * 0.08 * (1 - rs / 0.5) : 0);
     const sw = t - netSwish; netMesh.scale.set(1, sw < .6 ? 1 + Math.sin(sw * 20) * .15 * (1 - sw / .6) : 1, 1);
     updateCamera(dt, me);
+    arena.update(t, dt);
+    { const sc = Math.max(0, Math.ceil(possClock)); if (sc !== hoop.last) { hoop.last = sc; hoop.setClock(sc); } }
     renderer.render(scene, camera);
     raf = requestAnimationFrame(frame);
   }
