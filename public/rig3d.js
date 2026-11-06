@@ -8,6 +8,15 @@ import { clone as cloneSkinned } from "./vendor/SkeletonUtils.js";
 // Add new clips here: drop public/models/anim_<name>.glb and list the name.
 const CLIPS = ["dribble", "idle", "walk", "run", "defense"];
 const HEIGHT = 1.9;
+// ---- dribble tuning (procedural: athletic stance, pound the ball beside the hip, eyes up) ----
+export const DRIB = {
+  HZ_STAND: 1.9,     // bounces per second standing
+  HZ_RUN: 2.7,       // bounces per second at full speed
+  HOLD: 0.36,        // fraction of the cycle the hand rides the ball down (contact)
+  FLOOR: 0.64,       // when the ball hits the floor
+  LEAN: 0.05,        // forward lean with the ball (rad), + a bit more at speed
+  CROUCH: 0.06,      // how much to sit into the stance (m)
+};
 
 export async function loadRig() {
   const loader = new GLTFLoader(), base = "./models/";
@@ -226,9 +235,9 @@ export function updateRig(p, t, dt, other) {
   // pick clips for the arms (U) and the legs (L), then fade weights so each half always adds up to 1
   const def = !p.hasBall && other.hasBall, A = m.actions, W = {};
   const walkW = Math.min(1, speed / 0.35) * (1 - Math.max(0, (speed - 0.45) / 0.35)), runW = Math.max(0, Math.min(1, (speed - 0.45) / 0.35));
-  const moving = Math.min(1, walkW + runW), base = p.hasBall ? "dribble" : def ? "defense" : "idle";
+  const moving = Math.min(1, walkW + runW), base = def ? "defense" : "idle";
   W[base + "L"] = 1 - moving; W.walkL = walkW; W.runL = runW;
-  if (p.hasBall || def) W[base + "U"] = 1; else { W.idleU = 1 - moving; W.walkU = walkW; W.runU = runW; }
+  if (def) W[base + "U"] = 1; else { W.idleU = 1 - moving; W.walkU = walkW; W.runU = runW; }
   for (const k in A) { const tw = W[k] || 0; m.w[k] = lerp(m.w[k] ?? 0, tw, ease(9)); }
   // keep each half summing to 1 so the body never falls back to a T-pose
   for (const half of ["U", "L"]) {
@@ -244,11 +253,11 @@ export function updateRig(p, t, dt, other) {
   // dribble clip uses the right hand; mirror for left-hand dribbles.
   // During a cross the swap happens when the ball is at the floor, mid-move.
   const hand = mv && (mv.kind === "cross" || mv.kind === "behind" || mv.kind === "swap") && mk < 0.5 ? mv.from : p.hand;
-  const mirror = p.hasBall && hand === 0;
-  if (mirror !== m.mirror) { m.mirror = mirror; m.root.scale.x = mirror ? -m.s : m.s; }
+  // dribble rhythm (drives the arm here and the ball in the game loop)
+  p.dribU = ((p.dribU ?? 0) + dt * (DRIB.HZ_STAND + (DRIB.HZ_RUN - DRIB.HZ_STAND) * speed)) % 1;
   m.mixer.update(dt);
   // body: dip and lean into moves, sit down on defense, lean back on step backs
-  let dip = def ? 0.07 : 0, leanF = def ? 0.22 : p.hasBall ? 0.1 + speed * 0.15 : speed * 0.15, leanS = 0, twist = 0;
+  let dip = def ? 0.07 : p.hasBall ? DRIB.CROUCH : 0, leanF = def ? 0.22 : p.hasBall ? DRIB.LEAN : speed * 0.15, leanS = 0, twist = 0; // (the run clip already leans into the sprint)
   if (mv?.kind === "behind") { // from a recording: sit low and wide, hips turn to the ball side
     const sFrom = mv.from === 1 ? -1 : 1; dip = 0.13 * Math.min(1, arc * 1.6); leanF += 0.18 * arc; twist = sFrom * 0.55 * arc;
   } else if (mv?.kind === "cross") { // escape: deep plant, hips and shoulders sway from the ball side to the new side
@@ -288,9 +297,17 @@ export function updateRig(p, t, dt, other) {
       : p.shooting && p.hasBall ? shotForm(side, m.rise)
       : tv.set(side * 0.1, 1, 0.15), m.upW); // block: hands straight up
   // off arm while dribbling: an arm bar out front to shield the ball (the dribble arm stays on the clip)
-  const guard = p.hasBall && !p.shooting && !p.dunking && !(mv && (mv.kind === "cross" || mv.kind === "behind")) ? 1 : 0;
+  const guard = p.hasBall && !p.shooting && !p.dunking && !(mv && (mv.kind === "cross" || mv.kind === "behind" || mv.kind === "swap")) ? 1 : 0;
   m.guardW = lerp(m.guardW || 0, guard, ease(8));
-  if (m.guardW > 0.01) aimArmSide(m, p.group, m.mirror ? -1 : 1, [V(0.5, -0.35, 0.65), V(-0.15, 0.25, 1)], m.guardW * 0.85);
+  // dribbling arm: elbow tucked, forearm pumps the ball down beside the hip; off arm shields
+  const sd = hand === 1 ? -1 : 1; // visual side of the ball hand (+1 left, -1 right)
+  if (m.guardW > 0.01) {
+    const u = p.dribU, sm = x => x * x * (3 - 2 * x);
+    const push = u < DRIB.HOLD ? sm(u / DRIB.HOLD) : 1 - sm((u - DRIB.HOLD) / (1 - DRIB.HOLD)); // 0 = top (catch), 1 = bottom (release)
+    aimArms(m, p.group, side => side === sd
+      ? [mixV(V(side * 0.32, -0.86, 0.22), V(side * 0.36, -0.93, 0.0), push), mixV(V(side * 0.22, -0.42, 0.85), V(side * 0.14, -0.97, 0.2), push)]
+      : [V(side * 0.5, -0.35, 0.65), V(-side * 0.15, 0.25, 1)], m.guardW);
+  }
   // behind the back (from the recording): ball arm swings down and wraps behind the hips,
   // the other arm reaches out wide and low to take it, then both settle
   if (mv?.kind === "behind") {
@@ -350,8 +367,8 @@ export function updateRig(p, t, dt, other) {
     if (m.b.neck) { turn(m, m.b.neck, Y, m.hy * 0.35); turn(m, m.b.neck, X, -m.hp * 0.3); }
   }
   // the game reads hand positions for the ball
-  p.hands = m.mirror ? [m.b.R, m.b.L] : [m.b.L, m.b.R];
-  p.palms = m.mirror ? [m.b.pR, m.b.pL] : [m.b.pL, m.b.pR]; // where the ball actually sits
+  p.hands = [m.b.L, m.b.R];
+  p.palms = [m.b.pL, m.b.pR]; // where the ball actually sits
   p.handL = p.hands[0]; p.handR = p.hands[1];
 }
 const lerp = (a, b, k) => a + (b - a) * k;
@@ -392,7 +409,7 @@ const Y = new THREE.Vector3(0, 1, 0), Z = new THREE.Vector3(0, 0, 1), tv = new T
 // point upper arm + forearm along a direction in player space (side: -1 left, +1 right), blended by w
 const tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3(), want = new THREE.Vector3(), qx = new THREE.Quaternion(), qi = new THREE.Quaternion(), qinv = new THREE.Quaternion();
 function aimArms(m, group, dirFn, w) {
-  const flip = m.mirror ? -1 : 1;
+  const flip = 1; // body is never mirrored any more
   for (const [arm, fore, hand, side] of [[m.b.armL, m.b.foreL, m.b.L, 1], [m.b.armR, m.b.foreR, m.b.R, -1]]) {
     // dirFn gets the arm's on-screen side (+1 left, -1 right) and returns one direction
     // (straight arm) or [upper arm, forearm] (bent elbow), in player space
@@ -404,13 +421,13 @@ function aimArms(m, group, dirFn, w) {
 
 // aim just one arm, by visual side (+1 left, -1 right)
 function aimArmSide(m, group, vside, dirs, w) {
-  const flip = m.mirror ? -1 : 1;
+  const flip = 1; // body is never mirrored any more
   aimArms(m, group, side => side === vside ? [dirs[0].clone().setX(dirs[0].x * vside), dirs[1].clone().setX(dirs[1].x * vside)] : null, w);
 }
 const leg = new THREE.Vector3(), shin = new THREE.Vector3();
 // legFn(side) → [thigh forward, shin back, stance width] for that leg (side +1 = visual left)
 function aimLegs(m, group, w, legFn = side => side > 0 ? [0.45, 0.63, 0] : [0.25, 0.35, 0]) {
-  const flip = m.mirror ? -1 : 1;
+  const flip = 1; // body is never mirrored any more
   for (const [up, low, foot, side] of [[m.b.upL, m.b.legL, m.b.footL, 1], [m.b.upR, m.b.legR, m.b.footR, -1]]) {
     if (!up || !low || !foot) continue;
     const vs = side * flip, [f, b, wd] = legFn(vs), sx = vs * wd;

@@ -4,6 +4,7 @@
 import * as THREE from "./vendor/three.module.min.js";
 import { mergeGeometries } from "./vendor/BufferGeometryUtils.js";
 import { buildArena, buildProHoop, addAtmosphere } from "./arena3d.js";
+import { DRIB } from "./rig3d.js";
 
 const RIM = new THREE.Vector3(0, 3.05, 0), RIM_R = 0.23, BALL_R = 0.12, BOARD_Z = -0.38;
 const ARC = 6.75, GRAV = 9.8, TO_WIN = 15, COURT_X = 7.5, COURT_Z = 13.5;
@@ -20,8 +21,6 @@ const BLOCK_V = 4.2;   // m/s -> ~0.9 m contest jump
 const MOVES = { swap: { key: "", label: "", dur: 0.4, burst: 0, hidden: true }, hop: { key: "", label: "", dur: 0.42, burst: 3.6, hidden: true }, cross: { key: "KeyQ", label: "Cross", dur: 0.58, burst: 5.0 }, behind: { key: "KeyX", label: "Behind", dur: 0.78, burst: 0 },
   spin: { key: "KeyF", label: "Spin", dur: 0.65, burst: 4.2 }, stepback: { key: "KeyC", label: "Step back", dur: 0.48, burst: 4.0 } };
 
-// hand high/low points in the Mixamo dribble clip (seconds), measured from the animation
-const DRIB = { dur: 2.0833, max: [0, 0.71, 1.42, 2.0833], min: [0.33, 1.07, 1.77] };
 export function start(root, opts) {
   // online: host runs the game, guest sends inputs and draws the host's state
   const ONLINE = opts.online || null, NET = ONLINE?.net, GUEST = ONLINE?.role === "guest", ME = GUEST ? 1 : 0;
@@ -316,19 +315,16 @@ export function start(root, opts) {
         return;
       }
       (pl.palms || pl.hands)[pl.hand].getWorldPosition(tmp);
-      const da = pl.mx?.actions?.dribbleU;
-      if (da) {
-        // the clip pushes the ball down from the top of the hand's path to the bottom (3 bounces per loop);
-        // from the bottom the ball drops to the floor and comes back up into the hand at its next high point
-        const T = da.time % DRIB.dur; let i = 0; while (i < 2 && T > DRIB.max[i + 1]) i++;
-        const lo = DRIB.min[i], hi = DRIB.max[i + 1];
-        if (T < lo && T >= DRIB.max[i]) { ball.p.set(tmp.x, tmp.y - BALL_R, tmp.z); pl.ballOut = null; } // in the palm
+      if (pl.dribU != null) {
+        // rides down in the palm (contact), leaves at the bottom of the push, hits the floor, rises back into the palm at the top
+        const u = pl.dribU, H = DRIB.HOLD, F = DRIB.FLOOR;
+        if (u < H) { ball.p.set(tmp.x, tmp.y - BALL_R, tmp.z); pl.ballOut = null; }
         else {
-          const k = Math.min(1, (T - lo) / (hi - lo)), FL = 0.45;
-          if (!pl.ballOut) pl.ballOut = tmp.y - BALL_R;
-          const y = k < FL ? pl.ballOut + (BALL_R - pl.ballOut) * (k / FL) ** 2 : BALL_R + (tmp.y - BALL_R - BALL_R) * (1 - (1 - (k - FL) / (1 - FL)) ** 2);
+          if (pl.ballOut == null) pl.ballOut = tmp.y - BALL_R;
+          const y = u < F ? pl.ballOut + (BALL_R - pl.ballOut) * ((u - H) / (F - H)) ** 1.6 // accelerating down
+            : BALL_R + (tmp.y - 2 * BALL_R) * (1 - (1 - (u - F) / (1 - F)) ** 2);           // decelerating up into the hand
           ball.p.set(tmp.x, Math.max(BALL_R, y), tmp.z);
-          if (k >= FL && !pl.bounced) { pl.bounced = true; if (pl.team === ME) tone(95, .04, "sine", .05); } else if (k < FL) pl.bounced = false;
+          if (u >= F && !pl.bounced) { pl.bounced = true; if (pl.team === ME) tone(95, .04, "sine", .05); } else if (u < F) pl.bounced = false;
         }
         ball.spin += dt * 6;
         return;
