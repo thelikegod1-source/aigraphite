@@ -8,7 +8,9 @@ import { clone as cloneSkinned } from "./vendor/SkeletonUtils.js";
 // Add new clips here: drop public/models/anim_<name>.glb and list the name.
 const CLIPS = ["dribble", "idle", "walk", "run", "defense"];
 const HEIGHT = 1.9;
-const SMOOTH_RATE = 16; // 1/s: how fast posed joints catch up (lower = smoother/laggier)
+const SMOOTH_RATE = 16;
+const SHUFFLE = { STEP: 0.42, WIDTH: 0.38, REACH: 0.14, LIFT: 0.18 }; // m per step, stance width, lead-foot reach, knee lift
+const _lv = new THREE.Vector3(); // 1/s: how fast posed joints catch up (lower = smoother/laggier)
 // ---- dribble tuning (procedural: athletic stance, pound the ball beside the hip, eyes up) ----
 export const DRIB = {
   HZ_STAND: 1.9,     // bounces per second standing
@@ -242,7 +244,8 @@ export function updateRig(p, t, dt, other) {
   const def = !p.hasBall && other.hasBall, A = m.actions, W = {};
   const walkW = Math.min(1, speed / 0.35) * (1 - Math.max(0, (speed - 0.45) / 0.35)), runW = Math.max(0, Math.min(1, (speed - 0.45) / 0.35));
   const moving = Math.min(1, walkW + runW), base = def ? "defense" : "idle";
-  W[base + "L"] = 1 - moving; W.walkL = walkW; W.runL = runW;
+  if (def) W.defenseL = 1; // defense: legs stay in stance; the shuffle is procedural (below), never a forward run cycle
+  else { W[base + "L"] = 1 - moving; W.walkL = walkW; W.runL = runW; }
   if (def) W[base + "U"] = 1; else { W.idleU = 1 - moving; W.walkU = walkW; W.runU = runW; }
   for (const k in A) { const tw = W[k] || 0; m.w[k] = lerp(m.w[k] ?? 0, tw, ease(9)); }
   // keep each half summing to 1 so the body never falls back to a T-pose
@@ -351,6 +354,21 @@ export function updateRig(p, t, dt, other) {
   if (!({}).legs && stanceW > 0.01 && (bend > 0.02 || m.defLeg > 0.02)) {
     const c = Math.max(bend, m.defLeg * 0.85);
     aimLegs(m, p.group, stanceW, () => [0.15 + 0.6 * c, 0.1 + 0.55 * c, 0.12 + 0.28 * Math.max(m.defLeg, mv?.kind === "behind" ? arc : 0)]);
+  }
+  // defensive shuffle: steps synced to ground distance (no skating), lead foot reaches, trail foot closes,
+  // forward/back motion becomes short choppy steps; feet never cross
+  m.shufW = lerp(m.shufW || 0, def && !air ? Math.min(1, speed * 2.2) : 0, ease(10));
+  if (m.shufW > 0.01) {
+    _lv.set(p.vel.x, 0, p.vel.z).applyAxisAngle(Y, -p.group.rotation.y); // velocity in the player's own frame
+    const lat = _lv.x, fb = _lv.z, sp = Math.hypot(lat, fb);
+    m.shPh = ((m.shPh || 0) + sp * dt / SHUFFLE.STEP * Math.PI) % (Math.PI * 2);
+    const dir = Math.sign(lat) || 1, latK = Math.min(1, Math.abs(lat) / (sp + 1e-3)), sw = Math.sin(m.shPh);
+    aimLegs(m, p.group, m.shufW, side => {
+      const lead = side === dir ? 1 : -1, open = lead * sw * SHUFFLE.REACH * latK; // lead leg reaches out while the trail leg closes, then swap
+      const lift = Math.max(0, Math.cos(m.shPh + (lead > 0 ? 0 : Math.PI))) * SHUFFLE.LIFT;
+      const stride = (1 - latK) * Math.sin(m.shPh + (side > 0 ? 0 : Math.PI)) * 0.25 * Math.sign(fb || 1);
+      return [0.55 + lift + stride, 0.6 + lift * 1.5, Math.max(0.2, SHUFFLE.WIDTH + open)];
+    });
   }
   // keep the lowest foot on the court so bent knees lower the body instead of sinking the feet
   if (!({}).ground && !air && !hang && m.ankle != null) {
