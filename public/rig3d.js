@@ -8,6 +8,7 @@ import { clone as cloneSkinned } from "./vendor/SkeletonUtils.js";
 // Add new clips here: drop public/models/anim_<name>.glb and list the name.
 const CLIPS = ["dribble", "idle", "walk", "run", "defense"];
 const HEIGHT = 1.9;
+const SMOOTH_RATE = 16; // 1/s: how fast posed joints catch up (lower = smoother/laggier)
 // ---- dribble tuning (procedural: athletic stance, pound the ball beside the hip, eyes up) ----
 export const DRIB = {
   HZ_STAND: 1.9,     // bounces per second standing
@@ -23,10 +24,15 @@ export async function loadRig() {
   const [model, model2, ...anims] = await Promise.all([loader.loadAsync(base + "player.glb"), loader.loadAsync(base + "player2.glb").catch(() => null),
     ...CLIPS.map(n => loader.loadAsync(base + `anim_${n}.glb`).catch(() => null))]);
   const clips = {};
-  anims.forEach((g, i) => { const c = g?.animations?.[0]; if (c) { const ip = inPlace(c); clips[CLIPS[i] + "U"] = part(ip, true); clips[CLIPS[i] + "L"] = part(ip, false); } });
+  anims.forEach((g, i) => { let c = g?.animations?.[0]; if (c && CLIPS[i] === "defense") c = holdPose(c); if (c) { const ip = inPlace(c); clips[CLIPS[i] + "U"] = part(ip, true); clips[CLIPS[i] + "L"] = part(ip, false); } });
   return { scene: model.scene, scenes: [model.scene, (model2 || model).scene], clips };
 }
 
+// a 'pose' clip (a few frames that strobe when looped) -> one steady pose held for 1 s
+function holdPose(clip) {
+  const tracks = clip.tracks.map(tr => { const n = tr.getValueSize(), v = tr.values.slice(0, n); return new tr.constructor(tr.name, [0, 1], [...v, ...v]); });
+  return new THREE.AnimationClip(clip.name, 1, tracks);
+}
 // upper body (spine up, arms, head) vs lower body (hips, legs) so we can
 // dribble with the arms while the legs walk or run
 const LOWER = /(Hips|UpLeg|Leg|Foot|ToeBase|Toe_End)\./;
@@ -218,7 +224,7 @@ function turn(m, bone, axis, ang) {
 }
 // point bone j so the segment j → child runs along dir (player space), blended by w
 function aimBone(m, j, child, dir, w) {
-  j.updateMatrixWorld(true);
+  j.updateWorldMatrix(true, true); // parents too: stale parent matrices caused a 2-frame flip-flop
   m.root.worldToLocal(j.getWorldPosition(tmpA)); m.root.worldToLocal(child.getWorldPosition(tmpB));
   want.copy(dir).normalize(); if (m.mirror) want.x = -want.x;
   qx.setFromUnitVectors(tmpB.sub(tmpA).normalize(), want).slerp(qi.identity(), 1 - w);
@@ -279,7 +285,7 @@ export function updateRig(p, t, dt, other) {
   m.dip = lerp(m.dip || 0, dip, ease(14)); m.lf = lerp(m.lf || 0, leanF, ease(12)); m.ls = lerp(m.ls || 0, leanS, ease(12)); m.tw = lerp(m.tw || 0, twist, ease(12));
   m.root.position.y = m.baseY;
   p.group.updateMatrixWorld(true);
-  turn(m, m.b.spine, X, m.lf); turn(m, m.b.spine, Z, -m.ls); turn(m, m.b.spine, Y, m.tw);
+  if (!({}).spine) { turn(m, m.b.spine, X, m.lf); turn(m, m.b.spine, Z, -m.ls); turn(m, m.b.spine, Y, m.tw); }
   // arms: blend in overhead (shots, blocks, dunks) or wide (defense)
   const followT = p.released ? t - p.released : 9, follow = followT < 0.85;
   const hang = p.hang > t, slam = p.slam && t - p.slam < 0.25;
@@ -341,12 +347,12 @@ export function updateRig(p, t, dt, other) {
   // crouch with real knee bend (defense stance, gathers, landings, moves), wider base on D
   const bend = Math.min(1, m.dip / 0.12), stanceW = (1 - m.airW) * (1 - Math.min(1, speed * 1.4) * 0.75);
   m.defLeg = lerp(m.defLeg || 0, def ? 1 : 0, ease(6));
-  if (stanceW > 0.01 && (bend > 0.02 || m.defLeg > 0.02)) {
+  if (!({}).legs && stanceW > 0.01 && (bend > 0.02 || m.defLeg > 0.02)) {
     const c = Math.max(bend, m.defLeg * 0.85);
     aimLegs(m, p.group, stanceW, () => [0.15 + 0.6 * c, 0.1 + 0.55 * c, 0.12 + 0.28 * Math.max(m.defLeg, mv?.kind === "behind" ? arc : 0)]);
   }
   // keep the lowest foot on the court so bent knees lower the body instead of sinking the feet
-  if (!air && !hang && m.ankle != null) {
+  if (!({}).ground && !air && !hang && m.ankle != null) {
     p.group.updateMatrixWorld(true);
     m.b.footL.getWorldPosition(tmpA); m.b.footR.getWorldPosition(tmpB);
     const low = Math.min(tmpA.y, tmpB.y) - p.group.position.y;
@@ -354,9 +360,9 @@ export function updateRig(p, t, dt, other) {
     m.root.position.y = m.baseY + m.ground; p.group.updateMatrixWorld(true);
   } else m.ground = lerp(m.ground ?? 0, 0, ease(8));
   // defense: upper arms out, elbows bent, hands up and active
-  if (m.defW > 0.01 && !reach) aimArms(m, p.group, side => { const a = Math.sin(t * 2.2 + side * 1.7) * 0.12; return [V(side * 0.9, -0.25 + a * 0.4, 0.3), V(side * 0.25, 0.55 + a, 0.75)]; }, m.defW);
+  if (!({}).def && m.defW > 0.01 && !reach) aimArms(m, p.group, side => { const a = Math.sin(t * 1.6 + side * 1.7) * 0.07; return [V(side * 0.9, -0.25 + a * 0.4, 0.3), V(side * 0.25, 0.55 + a, 0.75)]; }, m.defW);
   // head tracks the ball (or the rim when shooting), within a natural range
-  if (m.b.head && p.lookT) {
+  if (!({}).head && m.b.head && p.lookT) {
     p.group.updateMatrixWorld(true);
     const loc = p.group.worldToLocal(tmpA.copy(p.lookT)); m.b.head.getWorldPosition(tmpB); p.group.worldToLocal(tmpB);
     const dx = loc.x - tmpB.x, dy = loc.y - tmpB.y, dz = loc.z - tmpB.z;
@@ -367,6 +373,16 @@ export function updateRig(p, t, dt, other) {
     if (m.b.neck) { turn(m, m.b.neck, Y, m.hy * 0.35); turn(m, m.b.neck, X, -m.hp * 0.3); }
   }
   // the game reads hand positions for the ball
+  // anti-pop: every procedurally posed bone follows its target through a short critically-damped blend,
+  // so mode switches (dribble/defense/reach/shot) and IK target jumps never snap in one frame
+  if (dt > 0 && !({}).smooth) {
+    const k = 1 - Math.exp(-dt * SMOOTH_RATE);
+    m.prevQ ||= new Map();
+    for (const bn of [m.b.armL, m.b.armR, m.b.foreL, m.b.foreR, m.b.L, m.b.R, m.b.spine, m.b.neck, m.b.head, m.b.upL, m.b.upR, m.b.legL, m.b.legR]) {
+      if (!bn) continue; const prev = m.prevQ.get(bn);
+      if (prev) { prev.slerp(bn.quaternion, k); bn.quaternion.copy(prev); } else m.prevQ.set(bn, bn.quaternion.clone());
+    }
+  }
   p.hands = [m.b.L, m.b.R];
   p.palms = [m.b.pL, m.b.pR]; // where the ball actually sits
   p.handL = p.hands[0]; p.handR = p.hands[1];

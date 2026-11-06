@@ -20,12 +20,12 @@ const SHOT = {
 const BLOCK_V = 4.2;
 // ---- behind-the-back escape (glide back + to the new hand side while the ball wraps) ----
 const BTB = {
-  GLIDE: 2.7,   // m/s peak glide speed (~1.4 m total over the move)
+  GLIDE: 3.3,   // m/s peak glide speed (~1.4 m total over the move)
   BACK: 0.78,   // share of the glide that goes away from the hoop
   SIDE: 0.62,   // share toward the new ball-hand side
   STEER_AT: 0.72, // move progress after which your stick takes over (run out of it)
 };   // m/s -> ~0.9 m contest jump
-const MOVES = { swap: { key: "", label: "", dur: 0.4, burst: 0, hidden: true }, hop: { key: "", label: "", dur: 0.42, burst: 3.6, hidden: true }, cross: { key: "KeyQ", label: "Cross", dur: 0.58, burst: 5.0 }, behind: { key: "KeyX", label: "Behind", dur: 0.78, burst: 0 },
+const MOVES = { swap: { key: "", label: "", dur: 0.4, burst: 0, hidden: true }, hop: { key: "", label: "", dur: 0.42, burst: 3.6, hidden: true }, cross: { key: "KeyQ", label: "Cross", dur: 0.58, burst: 5.0 }, behind: { key: "KeyX", label: "Behind", dur: 0.6, burst: 0 },
   spin: { key: "KeyF", label: "Spin", dur: 0.65, burst: 4.2 }, stepback: { key: "KeyC", label: "Step back", dur: 0.48, burst: 4.0 } };
 
 export function start(root, opts) {
@@ -408,7 +408,7 @@ export function start(root, opts) {
       [mx, mz] = toV(you.pos.clone().addScaledVector(toHoop, 0.95));
       const gap = flat(you.pos).distanceTo(flat(me.pos));
       if (you.shooting && gap < 2 && me.y === 0 && t > ai.jumpCool) { shoot = true; ai.jumpCool = t + 1.2; ai.holdUntil = t + 0.2; }
-      else if (!you.shooting && gap < 1.1 && me.y === 0 && t > ai.jumpCool && Math.random() < dt * 0.9) { reach(me); ai.jumpCool = t + 1.5; }
+      else if (!you.shooting && gap < 1.1 && me.y === 0 && t > ai.jumpCool && Math.random() < dt * 0.5) { reach(me); ai.jumpCool = t + 2.2; }
       shoot = shoot || t < ai.holdUntil;
     }
     return [mx * 0.85, mz * 0.85, shoot];
