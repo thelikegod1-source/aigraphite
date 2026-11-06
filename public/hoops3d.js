@@ -18,6 +18,17 @@ const SHOT = {
   BACKSPIN: 2.4,       // revolutions per second
 };
 const BLOCK_V = 4.2;
+// ---- dunk: a scripted sequence, never a position jump. Times in seconds, heights in meters ----
+const DUNK = {
+  RANGE: 1.9,      // start a dunk within this distance of the rim
+  GATHER: 0.2,     // anticipation: plant + load (body dips, momentum bleeds off)
+  RISE: 0.44,      // takeoff -> hand at the rim (ballistic ease-out in height, glide in)
+  PEAK: 0.78,      // body lift at the top (standing reach ~2.4 m + this puts the hand above the rim)
+  STANDOFF: 0.42,  // where the body ends up, in front of the rim toward the takeoff side
+  HANG: 0.32,      // brief hang on the rim after the slam
+  SAG: 0.1,        // body sinks this much while hanging
+  LAYUP_BEFORE: 0.55, // letting go of E before this much of the rise turns it into a layup
+};
 // ---- behind-the-back escape (glide back + to the new hand side while the ball wraps) ----
 const BTB = {
   GLIDE: 3.3,   // m/s peak glide speed (~1.4 m total over the move)
@@ -103,7 +114,7 @@ export function start(root, opts) {
     offense = team;
     const off = players[team], def = players[1 - team];
     off.pos.set((Math.random() - .5) * 2, 0, 9.2); def.pos.set(0, 0, 5.2);
-    for (const p of players) Object.assign(p, { y: 0, vy: 0, shooting: false, dunking: false, hasBall: false, move: null, stumble: 0, meter: 0 }) && p.vel.set(0, 0, 0);
+    for (const p of players) Object.assign(p, { y: 0, vy: 0, dunkSeq: null, hang: 0, shooting: false, dunking: false, hasBall: false, move: null, stumble: 0, meter: 0 }) && p.vel.set(0, 0, 0);
     off.hasBall = true; off.hand = 1; ball.holder = off; ball.shot = null; ball.cool = 0;
     posUI(team);
     ai.thinkAt = 0; ai.shootAt = 0; ai.holdUntil = 0; possClock = 12;
@@ -180,14 +191,40 @@ export function start(root, opts) {
     if (contest > 0.62) say(def.team, { m: ["SMOTHERED", 900], bz: 20 });
     pl.shooting = false; pl.meter = 0; tone(330, .06, "triangle", .08);
   }
+  // the ball leaves from where the hand actually is, and is thrown down through the hoop
   function dunk(pl) {
-    ball.holder = null; pl.hasBall = false; ball.p.set(RIM.x, RIM.y + 0.35, RIM.z + 0.05); ball.v.set(0, -4, 0); ball.cool = 0.5; pl.slam = t;
-    ball.shot = { team: pl.team, value: 1, dunk: true }; pl.vy = 0; pl.hang = t + 0.5; cam.shake = 0.35; rimShake = t; pl.shooting = false; pl.dunking = false; buzz(40); tone(140, .12, "sawtooth", .12);
+    const P = pl.palms || pl.hands; P[1].getWorldPosition(tmp);
+    ball.holder = null; pl.hasBall = false; ball.p.copy(tmp).y = Math.max(tmp.y - BALL_R, RIM.y + 0.12);
+    const fall = 0.09; ball.v.set((RIM.x - ball.p.x) / fall, -4.5, (RIM.z - ball.p.z) / fall).clampLength(0, 9); ball.cool = 0.5; pl.slam = t;
+    ball.shot = { team: pl.team, value: 1, dunk: true }; cam.shake = 0.35; rimShake = t; pl.shooting = false; pl.dunking = false; buzz(40); tone(140, .12, "sawtooth", .12);
+  }
+  const smooth01 = x => x * x * (3 - 2 * x);
+  function stepDunk(pl, rel) {
+    const D = pl.dunkSeq, e = t - D.t0, G = DUNK.GATHER, Rz = DUNK.RISE, H = DUNK.HANG;
+    pl.vy = 0;
+    if (e < G) { // gather: plant, momentum bleeds off, small step toward the rim
+      const k = e / G; pl.pos.copy(D.p0).lerp(D.p1, 0.08 * smooth01(k)); pl.y = 0; pl.vel.multiplyScalar(0.8); D.phase = "gather";
+    } else if (e < G + Rz) { // rise: glide in (ease out) while the height follows a jump (fast up, slows at the top)
+      const s = (e - G) / Rz;
+      pl.pos.copy(D.p0).lerp(D.p1, 0.08 + 0.92 * (1 - (1 - s) * (1 - s)));
+      pl.y = DUNK.PEAK * (1 - (1 - s) * (1 - s)); D.phase = "rise";
+      if (rel && s < DUNK.LAYUP_BEFORE && pl.hasBall) { // let go early: finish with a layup instead
+        pl.dunkSeq = null; pl.dunking = false; pl.vy = Math.max(0, 2 * DUNK.PEAK * (1 - s) / Rz); pl.meter = GREEN_C - 0.05; release(pl); return;
+      }
+    } else if (e < G + Rz + H) { // slam + hang: body sags a little from the rim, legs dangle
+      if (!D.slammed) { D.slammed = true; if (pl.hasBall) dunk(pl); }
+      const k = (e - G - Rz) / H; pl.pos.copy(D.p1); pl.y = DUNK.PEAK - DUNK.SAG * smooth01(k); pl.hang = t + 0.05; D.phase = "hang";
+    } else { // let go: hand the body back to gravity from exactly where it is (no jump)
+      pl.dunkSeq = null; pl.dunking = false; pl.shooting = false; pl.hang = 0; pl.vy = 0; D.phase = "drop";
+    }
+    pl.vel.set(0, 0, 0);
   }
   function scored(team, val, dunked) {
     score[team] += val; NET?.send({ sc: [team, val, dunked ? 1 : 0, score[0], score[1]] }); showScore(team, val, dunked); pause = 1.3;
     if (score[team] >= TO_WIN) return finish(team);
-    setTimeout(() => !over && setupPossession(1 - team), 1100);
+    // next possession only once nobody is mid-air (a dunker finishes hang + landing first)
+    const next = () => { if (over) return; if (players.some(p => p.dunkSeq || p.y > 0.01)) return setTimeout(next, 150); setupPossession(1 - team); };
+    setTimeout(next, dunked ? 1500 : 1100);
   }
   function showScore(team, val, dunked) {
     root.querySelector("#hs0").textContent = score[0]; root.querySelector("#hs1").textContent = score[1]; netSwish = t;
@@ -267,22 +304,24 @@ export function start(root, opts) {
         const dir = flat(pl.pos).sub(flat(RIM)).normalize();
         pl.move = { kind: "hop", t0: t, dur: 0.42, dir, from: pl.hand }; pl.moveCool = t + 0.6; pl.vy = 2.6; pl.space = t + 1.4; pl.hopT = t;
         tone(300, .05, "triangle", .07); say(pl.team, { m: ["HOP BACK", 600] });
-      } else if (pl.hasBall && distToRim(pl.pos) < 1.9) { pl.dunkStyle = Math.random() * 4 | 0; pl.vy = JUMP_V * 1.15; pl.dunking = true; pl.shooting = true; pl.meter = 0; pl.shotT = t; }
+      } else if (pl.hasBall && distToRim(pl.pos) < DUNK.RANGE) {
+        // dunk sequence: gather -> takeoff -> rise along an arc to the rim -> slam -> hang -> drop
+        const from = flat(pl.pos), toward = from.clone().sub(flat(RIM)); if (toward.lengthSq() < 0.01) toward.set(0, 0, 1); toward.normalize();
+        pl.dunkSeq = { t0: t, p0: from, p1: flat(RIM).addScaledVector(toward, DUNK.STANDOFF), slammed: false };
+        pl.rimPoint = RIM.clone().addScaledVector(new THREE.Vector3(toward.x, 0, toward.z), RIM_R * 0.8).setY(RIM.y + 0.04); // front of the rim
+        pl.dunkStyle = Math.random() * 4 | 0; pl.dunking = true; pl.shooting = true; pl.meter = 0; pl.shotT = t; pl.move = null;
+      }
       else if (pl.hasBall) { pl.shooting = true; pl.meter = 0; pl.shotT = t; pl.move = null; pl.jumpAt = t + SHOT.GATHER; } // gather, then rise
       else { pl.vy = BLOCK_V; pl.blockT = t; } // E on defense: jump / block
     }
     if (pl.jumpAt && t >= pl.jumpAt) { pl.vy = SHOT.JUMP_V; pl.jumpAt = 0; }
-    if (pl.hang > t) { pl.y = RIM.y - 2.15; pl.vy = 0; pl.vel.set(0, 0, 0); pl.pos.x += (RIM.x - pl.pos.x) * 0.3; pl.pos.z += (RIM.z + 0.42 - pl.pos.z) * 0.3; }
+    if (pl.dunkSeq) stepDunk(pl, rel);
     else if (!ground || pl.vy > 0) { pl.vy -= GRAV * dt; pl.y = Math.max(0, pl.y + pl.vy * dt); if (pl.y === 0) { pl.vy = 0; if (!pl.hasBall) pl.shooting = false; pl.dunking = false; } }
-    if (pl.dunking && pl.hasBall) {
-      pl.pos.addScaledVector(new THREE.Vector3(RIM.x - pl.pos.x, 0, RIM.z + 0.45 - pl.pos.z), Math.min(1, dt * 3));
-      if (pl.y > 0.7 && distToRim(pl.pos) < 1.0) dunk(pl);
-    }
     if (pl.shooting && pl.hasBall && !pl.dunking) {
       pl.meter += dt / METER_TIME;
       if (rel && world && remote.relMeter != null) { pl.meter = remote.relMeter; remote.relMeter = null; } // the guest timed it on their own screen
       if (rel || pl.meter >= 1.05) release(pl);
-    } else if (pl.dunking && pl.hasBall && rel) { pl.dunking = false; pl.meter = GREEN_C - 0.05; release(pl); } // let go early: layup
+    }
     // facing: toward motion, or the hoop when shooting / holding
     // defenders always square up to the ball handler and slide (no flipping between run direction and the man)
     const toO = flat(o.pos).sub(flat(pl.pos)), faceO = toO.lengthSq() > 0.09 ? Math.atan2(toO.x, toO.z) : pl.facing;
@@ -307,7 +346,7 @@ export function start(root, opts) {
   function stepBall(dt) {
     if (ball.holder) {
       const pl = ball.holder; pl.group.updateMatrixWorld(true);
-      if (pl.shooting || pl.dunking || pl.y > 0) { ball.p.copy(pl.dunking ? (pl.handR.getWorldPosition(tmp), tmp.add(new THREE.Vector3(0, .1, 0))) : handsMid(pl)); return; }
+      if (pl.shooting || pl.dunking || pl.y > 0) { ball.p.copy(pl.dunking ? ((pl.palms || pl.hands)[1].getWorldPosition(tmp), tmp.add(new THREE.Vector3(0, BALL_R * 0.6, 0))) : handsMid(pl)); return; }
       if (pl.move && (pl.move.kind === "cross" || pl.move.kind === "behind" || pl.move.kind === "swap")) {
         // held in the palm → one low bounce across → caught in the other palm
         const k = Math.min(1, (t - pl.move.t0) / pl.move.dur), kind = pl.move.kind, P = pl.palms || pl.hands, from = pl.move.from;

@@ -296,7 +296,8 @@ export function updateRig(p, t, dt, other) {
   m.upW = lerp(m.upW || 0, up ? 1 : 0, ease(up ? 16 : 8));
   m.defW = lerp(m.defW || 0, def && !up ? 1 : 0, ease(6));
   if (m.upW > 0.01) aimArms(m, p.group, side =>
-      hang && !(p.slam && t - p.slam < 0.15) ? tv.set(side * 0.12, 1, 0.12) // hanging on the rim
+      hang && !(p.slam && t - p.slam < 0.15) ? rimReach(m, p, side, true) // hand IK: hands on the rim
+      : p.dunking && p.dunkSeq?.phase === "rise" && (t - p.dunkSeq.t0) > 0.38 ? rimReach(m, p, side, false) // late rise: reach for the rim
       : p.dunking ? dunkArm(p, side)
       : slam ? tv.set(side * 0.1, 0.6, 0.8) // throw it down
       : follow && !p.hasBall ? followThrough(side, Math.min(1, followT / 0.25))
@@ -406,6 +407,18 @@ function shotForm(side, k) {
 function followThrough(side, k) {
   if (side < 0) return [mixV(V(-0.12, 0.9, 0.42), V(-0.03, 0.95, 0.3), k), mixV(V(0, 1, -0.1), V(0, 0.92, 0.38), k)];
   return [V(side * 0.62, 0.6, 0.35), mixV(V(-side * 0.7, 0.62, 0.12), V(-side * 0.45, 0.8, 0.15), k)];
+}
+// hand IK toward the rim: straight arm from the shoulder at the rim point (player space).
+// Ball hand goes to the front of the rim; on the hang both hands grip it.
+const _sh = new THREE.Vector3(), _rim = new THREE.Vector3(), _iq = new THREE.Quaternion();
+function rimReach(m, p, side, both) {
+  if (!p.rimPoint) return tv.set(side * 0.12, 1, 0.12);
+  const ballHand = side < 0; // visual right
+  if (!both && !ballHand) return tv.set(side * 0.45, 0.75, 0.35); // off arm balances
+  (side > 0 ? m.b.armL : m.b.armR).getWorldPosition(_sh);
+  _rim.copy(p.rimPoint); if (both) _rim.x += side * 0.12; // grip a little apart
+  _rim.sub(_sh); p.group.getWorldQuaternion(_iq).invert(); _rim.applyQuaternion(_iq);
+  return tv.copy(_rim).normalize();
 }
 // arm direction on the way up for each dunk style (side: +1 / -1 per arm)
 function dunkArm(p, side) {
