@@ -313,7 +313,7 @@ export function updateRig(p, t, dt, other) {
   if (!({}).spine) { turn(m, m.b.spine, X, m.lf); turn(m, m.b.spine, Z, -m.ls); turn(m, m.b.spine, Y, m.tw); }
   // arms: blend in overhead (shots, blocks, dunks) or wide (defense)
   const followT = p.released ? t - p.released : 9, follow = followT < 0.85;
-  const hang = p.hang > t, slam = p.slam && t - p.slam < 0.25;
+  const hang = p.hang > t, slam = p.slam && t - p.slam < 0.25, postSlam = p.slam && t - p.slam < 1.4; // arms come down from the rim pose, not from a different one
   const up = (p.shooting && p.hasBall) || follow || p.dunking || hang || slam || (p.blockT && t - p.blockT < 0.7);
   // shot path: ball at the chest on the gather, rising to the set point, then snapped up on release
   const rise = p.shooting && p.hasBall ? Math.min(1, (p.meter || 0) * 1.25) : 1;
@@ -321,9 +321,9 @@ export function updateRig(p, t, dt, other) {
   m.upW = lerp(m.upW || 0, up ? 1 : 0, ease(up ? 16 : 8));
   m.defW = lerp(m.defW || 0, def && !up ? 1 : 0, ease(6));
   if (m.upW > 0.01) aimArms(m, p.group, side =>
-      hang && !(p.slam && t - p.slam < 0.18) ? rimReach(m, p, side, true) // hands on the rim, elbows soft
+      hang ? hangArm(m, p, side, t) // grip the rim; the slam is a pull-down pulse on the same pose (no snap)
       : p.dunking ? dunkArm(m, p, side)
-      : slam ? slamArm(side) // whip down through the rim, wrist snaps
+      : slam || (postSlam && !p.hasBall && !p.shooting && !(p.blockT && t - p.blockT < 0.7)) ? hangArm(m, p, side, t)
       : follow && !p.hasBall ? followThrough(side, Math.min(1, followT / 0.25))
       : p.shooting && p.hasBall ? shotForm(side, m.rise)
       : (side < 0 ? tv.set(-0.05, 1, 0.35) : tv.set(0.55, -0.1, -0.55)), m.upW); // contest: one arm straight up at the ball, the other back for balance
@@ -528,21 +528,29 @@ function rimReach(m, p, side, both) {
 }
 // arm direction on the way up for each dunk style (side: +1 / -1 per arm)
 // dunk arms by phase, as [upper arm, forearm] so the elbow bends: gather at the chest -> cock back -> extend to the rim
+// dunk arms on ONE continuous path (upper arm + forearm so the elbow bends):
+// gather at the chest -> cock back -> extend to the rim. No intermediate pose switches.
 function dunkArm(m, p, side) {
-  const D = p.dunkSeq || {}, ph = D.phase, u = D.u ?? 1, ballSide = side < 0, sm = x => x * x * (3 - 2 * Math.max(0, Math.min(1, x)));
-  const gather = [V(side * 0.35, -0.7, 0.6), V(-side * 0.45, 0.25, 0.85)]; // both hands on the ball in front of the chest
+  const D = p.dunkSeq || {}, ph = D.phase, u = ph === "rise" ? (D.u ?? 0) : 0, ballSide = side < 0;
+  const sm = x => { x = Math.max(0, Math.min(1, x)); return x * x * (3 - 2 * x); };
+  const gather = [V(side * 0.35, -0.7, 0.6), V(-side * 0.45, 0.25, 0.85)];
   if (ph === "approach" || ph === "gather") return gather;
   const style = p.dunkStyle || 0, two = style === 1 || style === 2;
-  // cocked pose for this arm
   let cock;
-  if (style === 2) cock = [V(side * 0.45, 0.75, 0.2), V(-side * 0.4, 0.85, 0.1)];          // 360: ball overhead, elbows bent
-  else if (style === 3 && ballSide) { const a = -Math.PI / 2 + u * Math.PI * 1.7; cock = [V(-0.2, Math.sin(a), Math.cos(a)), V(-0.1, Math.sin(a + 0.35), Math.cos(a + 0.35))]; } // windmill, slight bend
-  else if (two || ballSide) cock = [V(side * (two ? 0.22 : 0.3), 0.85, -0.1), V(side * 0.05, 0.2, -0.98)]; // cocked behind the head
-  else cock = [V(side * 0.5, 0.55, 0.6), V(side * 0.15, 0.9, 0.4)];                            // off arm: up and out for balance
-  const a1 = sm(u / 0.35);                                  // gather -> cock over the first third of the rise
-  const reach = (two || ballSide) && style !== 2 ? sm((u - 0.7) / 0.3) : 0; // extend at the top
-  const r = reach > 0 ? rimReach(m, p, side, false) : cock;
-  return [gather[0].clone().lerp(cock[0], a1).lerp(r[0], reach).normalize(), gather[1].clone().lerp(cock[1], a1).lerp(r[1], reach).normalize()];
+  if (style === 2) cock = [V(side * 0.45, 0.75, 0.2), V(-side * 0.4, 0.85, 0.1)];
+  else if (style === 3 && ballSide) { const a = -Math.PI / 2 + Math.min(1, u / 0.8) * Math.PI * 1.7; cock = [V(-0.2, Math.sin(a), Math.cos(a)), V(-0.1, Math.sin(a + 0.35), Math.cos(a + 0.35))]; }
+  else if (two || ballSide) cock = [V(side * (two ? 0.22 : 0.3), 0.85, -0.1), V(side * 0.05, 0.2, -0.98)];
+  else cock = [V(side * 0.5, 0.55, 0.6), V(side * 0.15, 0.9, 0.4)];
+  const grip = rimReach(m, p, side, true);          // the same target the hang uses -> no jump at the slam
+  const a1 = sm(u / 0.4), a2 = sm((u - 0.55) / 0.45);
+  const up = gather[0].clone().lerp(cock[0], a1).lerp(grip[0], a2).normalize();
+  const fo = gather[1].clone().lerp(cock[1], a1).lerp(grip[1], a2).normalize();
+  return [up, fo];
+}
+// on the rim: grip pose; for ~0.22 s after the slam the forearms pull down through the rim, then ease back to the grip
+function hangArm(m, p, side, t) {
+  const g = rimReach(m, p, side, true), e = p.slam ? t - p.slam : 9, pull = e < 0.22 ? Math.sin(Math.PI * e / 0.22) * 0.55 : 0;
+  return [g[0], g[1].clone().lerp(V(side * 0.05, -0.6, 0.8), pull).normalize()];
 }
 // slam: ball arm whips forward-down through the rim (wrist snaps), off arm stays up
 function slamArm(side) { return side < 0 ? [V(side * 0.15, 0.35, 0.9), V(0, -0.55, 0.8)] : [V(side * 0.5, 0.5, 0.4), V(side * 0.15, 0.85, 0.3)]; }
