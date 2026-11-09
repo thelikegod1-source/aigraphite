@@ -27,7 +27,10 @@ const JUMPS = { FADE: 0.55, CONTEST_LUNGE: 2.2, CONTEST_RANGE: 3.0 }; // m/s bac
 const MOVE = { ACCEL: 15, DECEL: 22, AIR: 2.5 }; // m/s^2
 // ---- dunk: a scripted sequence, never a position jump. Times in seconds, heights in meters ----
 const DUNK = {
-  RANGE: 1.9,      // start a dunk within this distance of the rim
+  RANGE: 1.9,      // standing dunk within this distance of the rim
+  DRIVE_RANGE: 3.2, // ...or from this far when driving at the rim (approach steps first)
+  APPROACH_V: 5.0, // m/s on the last steps into the gather
+  GATHER_AT: 1.7,  // the gather starts this far from the rim
   GATHER: 0.2,     // anticipation: plant + load (body dips, momentum bleeds off)
   RISE: 0.44,      // takeoff -> hand at the rim (ballistic ease-out in height, glide in)
   PEAK: 0.78,      // body lift at the top (standing reach ~2.4 m + this puts the hand above the rim)
@@ -61,7 +64,7 @@ export function start(root, opts) {
   // online: host runs the game, guest sends inputs and draws the host's state
   const ONLINE = opts.online || null, NET = ONLINE?.net, GUEST = ONLINE?.role === "guest", ME = GUEST ? 1 : 0;
   const names = opts.names || [opts.p1 || "You", "AI"];
-  const FREE = !!opts.freestyle; // freestyle: no shot clock, no game end, always your ball, defender just guards (no steals/blocks)
+  const FREE = !!opts.freestyle; let aiOn = true; // freestyle: no shot clock, no game end, always your ball, defender just guards (no steals/blocks)
   root.innerHTML = `<div class="h3">
     <div class="hp-top"><div class="hp-sc blue"><span>${esc(names[0])}</span><b id="hs0">0</b></div>
       <div class="hp-mid">First to ${TO_WIN}<small>2 beyond the arc · 1 inside</small></div>
@@ -218,8 +221,15 @@ export function start(root, opts) {
     ball.shot = { team: pl.team, value: 1, dunk: true }; cam.shake = 0.35; rimShake = t; pl.shooting = false; pl.dunking = false; buzz(40); tone(140, .12, "sawtooth", .12);
   }
   const smooth01 = x => x * x * (3 - 2 * x);
-  function stepDunk(pl, rel) {
-    const D = pl.dunkSeq, e = t - D.t0, G = DUNK.GATHER, Rz = DUNK.RISE, H = DUNK.HANG;
+  function stepDunk(pl, rel, dt) {
+    const D = pl.dunkSeq;
+    if (D.approach) { // last steps at the rim (running, still dribbling), then the gather starts from where he is
+      const to = flat(RIM).sub(flat(pl.pos)), d = to.length(); D.phase = "approach";
+      pl.vel.lerp(to.normalize().multiplyScalar(DUNK.APPROACH_V), 1 - Math.exp(-dt * 10)); // (position is integrated by stepPlayer)
+      if (d <= DUNK.GATHER_AT || t - D.t0 > 0.6) { D.approach = false; D.t0 = t; D.p0 = flat(pl.pos); const tw = flat(pl.pos).sub(flat(RIM)).normalize(); D.p1 = flat(RIM).addScaledVector(tw, DUNK.STANDOFF); }
+      return;
+    }
+    const e = t - D.t0, G = DUNK.GATHER, Rz = DUNK.RISE, H = DUNK.HANG;
     pl.vy = 0;
     if (e < G) { // gather: plant, momentum bleeds off, small step toward the rim
       const k = e / G; pl.pos.copy(D.p0).lerp(D.p1, 0.08 * smooth01(k)); pl.y = 0; pl.vel.multiplyScalar(0.8); D.phase = "gather";
@@ -350,10 +360,11 @@ export function start(root, opts) {
         const dir = flat(pl.pos).sub(flat(RIM)).normalize();
         pl.move = { kind: "hop", t0: t, dur: 0.42, dir, from: pl.hand }; pl.moveCool = t + 0.6; pl.vy = 2.6; pl.space = t + 1.4; pl.hopT = t;
         tone(300, .05, "triangle", .07); say(pl.team, { m: ["HOP BACK", 600] });
-      } else if (pl.hasBall && distToRim(pl.pos) < DUNK.RANGE) {
+      } else if (pl.hasBall && (distToRim(pl.pos) < DUNK.RANGE || distToRim(pl.pos) < DUNK.DRIVE_RANGE && pl.vel.dot(flat(RIM).sub(flat(pl.pos)).normalize()) > 2.5)) {
         // dunk sequence: gather -> takeoff -> rise along an arc to the rim -> slam -> hang -> drop
         const from = flat(pl.pos), toward = from.clone().sub(flat(RIM)); if (toward.lengthSq() < 0.01) toward.set(0, 0, 1); toward.normalize();
-        pl.dunkSeq = { t0: t, p0: from, p1: flat(RIM).addScaledVector(toward, DUNK.STANDOFF), slammed: false };
+        const far = distToRim(pl.pos) > DUNK.GATHER_AT;
+        pl.dunkSeq = { t0: t, p0: from, p1: flat(RIM).addScaledVector(toward, DUNK.STANDOFF), slammed: false, approach: far };
         pl.rimPoint = RIM.clone().addScaledVector(new THREE.Vector3(toward.x, 0, toward.z), RIM_R * 0.8).setY(RIM.y + 0.04); // front of the rim
         pl.dunkStyle = Math.random() * 4 | 0; pl.dunking = true; pl.shooting = true; pl.meter = 0; pl.shotT = t; pl.move = null;
       }
@@ -368,7 +379,7 @@ export function start(root, opts) {
       pl.vy = SHOT.JUMP_V; pl.jumpAt = 0;
       const away = flat(pl.pos).sub(flat(RIM)); if (away.lengthSq() > 0.01) pl.vel.copy(away.normalize().multiplyScalar(JUMPS.FADE));
     }
-    if (pl.dunkSeq) stepDunk(pl, rel);
+    if (pl.dunkSeq) stepDunk(pl, rel, dt);
     else if (!ground || pl.vy > 0) { pl.vy -= GRAV * dt; pl.y = Math.max(0, pl.y + pl.vy * dt); if (pl.y === 0) { pl.vy = 0; if (!pl.hasBall) pl.shooting = false; pl.dunking = false; } }
     if (pl.shooting && pl.hasBall && !pl.dunking) {
       pl.meter += dt / METER_TIME;
@@ -492,6 +503,7 @@ export function start(root, opts) {
     let mx = 0, mz = 0, shoot = false;
     const toV = p => { const camFwd = flat(RIM.clone().sub(camera.position)).normalize(), right = new THREE.Vector3(-camFwd.z, 0, camFwd.x), d = flat(p.clone().sub(me.pos)); const l = d.length(); if (l < 0.25) return [0, 0]; d.divideScalar(Math.max(1, l)); return [d.dot(right), -d.dot(camFwd)]; };
     if (me.stumble > t) return [0, 0, false];
+    if (FREE && !aiOn) { me.pos.set(0, 0, 40); me.vel.set(0, 0, 0); return [0, 0, false]; } // defender switched off
     if (FREE && !me.hasBall) { // freestyle defender: stays in front and slides with you, never reaches or jumps
       if (!ball.holder) return [0, 0, false];
       const toHoop = new THREE.Vector3(RIM.x - you.pos.x, 0, RIM.z - you.pos.z).normalize(), [mx2, mz2] = toV(you.pos.clone().addScaledVector(toHoop, 1.3));
@@ -533,7 +545,7 @@ export function start(root, opts) {
         stepPlayer(players[0], dt, input.x || kx, input.z || kz, input.shoot, input.wasShoot);
         if (NET) { stepPlayer(players[1], dt, remote.x, remote.z, remote.s, remote.was, true); remote.was = remote.s; }
         else { const [ax, az, as] = aiStep(dt, players[1], players[0]); stepPlayer(players[1], dt, ax, az, as, aiPrev.shoot); aiPrev.shoot = as; }
-        const a = players[0], b = players[1], d = flat(a.pos).sub(flat(b.pos)), l = d.length();
+        const a = players[0], b = players[1], d = flat(a.pos).sub(flat(b.pos)), l = FREE && !aiOn ? 99 : d.length();
         if (l < 0.75 && l > 0) {
           // a set defender in front of the ball handler holds their spot; the handler bounces off
           const off = a.hasBall ? a : b.hasBall ? b : null, def = off === a ? b : a;
@@ -589,7 +601,7 @@ export function start(root, opts) {
     const ov = opts.debug && window.__h3?.cam; if (ov) { camera.position.set(me.pos.x + ov[0], ov[1], me.pos.z + ov[2]); camera.lookAt(me.pos.x, me.y + (ov[3] ?? 0.95), me.pos.z); return; }
     // Park-style broadcast framing: high and wide behind the play, keeps you, your man, the ball and the hoop in view.
     // Never follows jump height (no tilting up at the crowd); every value is damped per second.
-    const o = players[1 - me.team], bp = ball.holder ? ball.holder.pos : ball.p;
+    const o = FREE && !aiOn ? me : players[1 - me.team], bp = ball.holder ? ball.holder.pos : ball.p; // no defender: frame just you + ball
     const c = new THREE.Vector3(me.pos.x * 0.45 + o.pos.x * 0.3 + bp.x * 0.25, 0, me.pos.z * 0.45 + o.pos.z * 0.3 + bp.z * 0.25);
     c.lerp(flat(RIM), CAM.TOWARD_RIM);
     const spread = Math.max(flat(me.pos).distanceTo(c), flat(o.pos).distanceTo(c), flat(bp).distanceTo(c), flat(RIM).distanceTo(c) * 0.55);
@@ -698,7 +710,20 @@ export function start(root, opts) {
   if (opts.debug) window.__h3 = { players, ball, get score() { return score; }, input, doMove: k => doMove(players[0], k), givePoss: tm => setupPossession(tm), get rig() { return rig; }, get g() { return [gMeter, gWas, gSeq]; } };
   camera.position.set(0, 4, 14);
   msg(GUEST ? "Their ball · lock in on D" : FREE ? "Freestyle · no clock · cook" : "Your ball · get buckets", 1600);
-  if (FREE) { root.querySelector(".hp-mid").innerHTML = "FREESTYLE<small>no shot clock · practice your bag</small>"; }
+  if (FREE) {
+    root.querySelector(".hp-mid").innerHTML = "FREESTYLE<small>no shot clock · practice your bag</small>";
+    // freestyle menu: defender on/off
+    const menu = document.createElement("div"); menu.className = "h3-free";
+    menu.innerHTML = `<button id="hfAi" aria-pressed="true">Defender: ON</button>`;
+    wrap.appendChild(menu);
+    const b = menu.querySelector("#hfAi"), ai1 = players[1];
+    b.onclick = () => {
+      aiOn = !aiOn; b.textContent = "Defender: " + (aiOn ? "ON" : "OFF"); b.setAttribute("aria-pressed", aiOn);
+      ai1.group.visible = aiOn; ai1.stumble = 0;
+      if (aiOn) ai1.pos.set(players[0].pos.x, 0, players[0].pos.z - 1.4); else ai1.pos.set(0, 0, 40); // parked far off court
+      ai1.vel.set(0, 0, 0); b.blur();
+    };
+  }
   raf = requestAnimationFrame(frame);
   return cleanup;
 }
