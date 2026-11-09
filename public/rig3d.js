@@ -266,6 +266,7 @@ export function updateRig(p, t, dt, other) {
     for (const k in A) if (k.endsWith(half)) A[k].setEffectiveWeight(sum > 0 ? m.w[k] / sum : 0);
   }
   const stride = 0.75 + speed * 0.5;
+  { const c = (A.runL && m.w.runL > m.w.walkL ? A.runL : A.walkL); if (c) m.stridePh = (c.time / c.getClip().duration) * Math.PI * 2; }
   for (const h of ["U", "L"]) {
     if (A["dribble" + h]) A["dribble" + h].timeScale = mv ? 1.8 : 1 + speed * 0.4;
     if (A["walk" + h]) A["walk" + h].timeScale = stride * 1.1;
@@ -334,9 +335,14 @@ export function updateRig(p, t, dt, other) {
   if (m.guardW > 0.01) {
     const u = p.dribU, sm = x => x * x * (3 - 2 * x);
     const push = u < DRIB.HOLD ? sm(u / DRIB.HOLD) : 1 - sm((u - DRIB.HOLD) / (1 - DRIB.HOLD)); // 0 = top (catch), 1 = bottom (release)
+    // dribble hand: full control (it has to meet the ball)
     aimArms(m, p.group, side => side === sd
       ? [mixV(V(side * 0.32, -0.86, 0.22), V(side * 0.36, -0.93, 0.0), push), mixV(V(side * 0.22, -0.42, 0.85), V(side * 0.14, -0.97, 0.2), push)]
-      : [V(side * 0.5, -0.35, 0.65), V(-side * 0.15, 0.25, 1)], m.guardW);
+      : null, m.guardW);
+    // off arm: shield when slow; at speed it pumps with the stride like a real sprint (opposite the near leg)
+    const runK = Math.min(1, Math.max(0, (speed - 0.05) * 3));
+    // (at speed the mocap run clip's own arm swing takes over - real motion beats a hand-posed pump)
+    aimArms(m, p.group, side => side === sd ? null : [V(side * 0.42, -0.82, 0.38), V(-side * 0.35, -0.3, 0.88)], m.guardW * 0.35 * (1 - runK)); // subtle low arm bar, relaxed
   }
   // behind the back (from the recording): ball arm swings down and wraps behind the hips,
   // the other arm reaches out wide and low to take it, then both settle
@@ -438,7 +444,7 @@ export function updateRig(p, t, dt, other) {
   // defense: upper arms out, elbows bent, hands up and active
   // active defense: one hand up to contest, the other low mirroring the ball; they trade every so often,
   // the low hand tracks the ball, and both "dig" a little - alive, not frozen
-  if (m.defW > 0.01 && !reach) {
+  if (m.defW > 0.01 && !reach && speed < 0.75) { // sprinting on D: let the run swing through
     if (!m.dHandT || t > m.dHandT) { m.dHand = m.dHand === 1 ? -1 : 1; m.dHandT = t + 1.1 + Math.random() * 1.2; }
     m.dSwap = lerp(m.dSwap ?? 0, m.dHand, ease(5)); // smooth trade (-1..1)
     let bx = 0, by = -0.3; if (p.ballLocal) { bx = Math.max(-0.9, Math.min(0.9, p.ballLocal.x)); by = Math.max(-0.7, Math.min(0.2, p.ballLocal.y - 1.1)); }
@@ -460,6 +466,14 @@ export function updateRig(p, t, dt, other) {
     m.hy = lerp(m.hy || 0, yaw * ok, ease(5)); m.hp = lerp(m.hp || 0, pitch * ok, ease(5));
     turn(m, m.b.head, Y, m.hy * 0.65); turn(m, m.b.head, X, -m.hp * 0.7);
     if (m.b.neck) { turn(m, m.b.neck, Y, m.hy * 0.35); turn(m, m.b.neck, X, -m.hp * 0.3); }
+  }
+  // overlapping action: upper arms trail the body's acceleration a little (springy, settles on its own)
+  if (dt > 0) {
+    const ax = (p.vel.x - (m.pvx ?? p.vel.x)) / dt, az = (p.vel.z - (m.pvz ?? p.vel.z)) / dt; m.pvx = p.vel.x; m.pvz = p.vel.z;
+    _lv.set(ax, 0, az).applyAxisAngle(Y, -p.group.rotation.y);
+    const k = 1 - Math.exp(-dt * 9);
+    m.lagX = lerp(m.lagX || 0, Math.max(-0.18, Math.min(0.18, -_lv.z * 0.012)), k); m.lagZ = lerp(m.lagZ || 0, Math.max(-0.15, Math.min(0.15, _lv.x * 0.01)), k);
+    if (!p.shooting && !p.dunking && !hang) for (const a of [m.b.armL, m.b.armR]) { turn(m, a, X, m.lagX); turn(m, a, Z, m.lagZ); }
   }
   // the game reads hand positions for the ball
   // anti-pop: every procedurally posed bone follows its target through a short critically-damped blend,
