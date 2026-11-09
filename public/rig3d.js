@@ -273,7 +273,7 @@ export function updateRig(p, t, dt, other) {
   }
   // dribble clip uses the right hand; mirror for left-hand dribbles.
   // During a cross the swap happens when the ball is at the floor, mid-move.
-  const hand = mv && (mv.kind === "cross" || mv.kind === "behind" || mv.kind === "swap") && mk < 0.5 ? mv.from : p.hand;
+  const hand = mv && (mv.kind === "cross" || mv.kind === "behind" || mv.kind === "swap" || mv.kind === "legs") && mk < 0.5 ? mv.from : p.hand;
   // dribble rhythm (drives the arm here and the ball in the game loop)
   p.dribU = ((p.dribU ?? 0) + dt * (DRIB.HZ_STAND + (DRIB.HZ_RUN - DRIB.HZ_STAND) * speed)) % 1;
   m.mixer.update(dt);
@@ -281,6 +281,11 @@ export function updateRig(p, t, dt, other) {
   let dip = def ? 0.07 : p.hasBall ? DRIB.CROUCH : 0, leanF = def ? 0.1 : p.hasBall ? DRIB.LEAN : speed * 0.15, leanS = 0, twist = 0; // (the run clip already leans into the sprint)
   if (mv?.kind === "behind") { // from a recording: sit low and wide, hips turn to the ball side
     const sFrom = mv.from === 1 ? -1 : 1; dip = 0.13 * Math.min(1, arc * 1.6); leanF += 0.18 * arc; twist = sFrom * 0.55 * arc;
+  } else if (mv?.kind === "legs") { // between the legs: deep wide sit, slight lean
+    dip = 0.2 * Math.sin(Math.PI * Math.min(1, mk * 1.2)); leanF += 0.18 * arc;
+  } else if (mv?.kind === "hesi") { // stand up tall (sell the shot), then drop and go
+    dip = mk < 0.42 ? -0.06 * Math.sin(Math.PI * mk / 0.42) : 0.12 * Math.sin(Math.PI * (mk - 0.42) / 0.58); leanF = mk < 0.42 ? -0.05 : 0.3;
+  } else if (mv?.kind === "snatch") { leanF = -0.3 * arc; dip = 0.08 * arc;
   } else if (mv?.kind === "cross") { // escape: deep plant, hips and shoulders sway from the ball side to the new side
     const sFrom = mv.from === 1 ? -1 : 1, sw = mk * mk * (3 - 2 * mk);
     dip = 0.2 * Math.sin(Math.PI * Math.min(1, mk * 1.15)); leanF += 0.16 * arc; twist = sFrom * 0.35 * (1 - 2 * sw); leanS = sFrom * 0.28 * (1 - 2 * sw);
@@ -321,7 +326,7 @@ export function updateRig(p, t, dt, other) {
       : p.shooting && p.hasBall ? shotForm(side, m.rise)
       : (side < 0 ? tv.set(-0.05, 1, 0.35) : tv.set(0.55, -0.1, -0.55)), m.upW); // contest: one arm straight up at the ball, the other back for balance
   // off arm while dribbling: an arm bar out front to shield the ball (the dribble arm stays on the clip)
-  const guard = p.hasBall && !p.shooting && !p.dunking && !(mv && (mv.kind === "cross" || mv.kind === "behind" || mv.kind === "swap")) ? 1 : 0;
+  const guard = p.hasBall && !p.shooting && !p.dunking && !(mv && (mv.kind === "cross" || mv.kind === "behind" || mv.kind === "swap" || mv.kind === "legs")) ? 1 : 0;
   m.guardW = lerp(m.guardW || 0, guard, ease(8));
   // dribbling arm: elbow tucked, forearm pumps the ball down beside the hip; off arm shields
   const sd = hand === 1 ? -1 : 1; // visual side of the ball hand (+1 left, -1 right)
@@ -345,7 +350,7 @@ export function updateRig(p, t, dt, other) {
       : [mixV(V(side * 0.4, -0.8, 0.3), V(side * 0.9, -0.45, 0.15), catchK), mixV(V(side * 0.2, -0.3, 0.9), V(side * 0.55, -0.55, 0.45), catchK)],
       Math.min(1, arc * 2.2) * (1 - out));
   }
-  if (mv?.kind === "cross" || mv?.kind === "swap") {
+  if (mv?.kind === "cross" || mv?.kind === "swap" || mv?.kind === "legs") {
     const sFrom = mv.from === 1 ? -1 : 1, k = mk, sm = x => x * x * (3 - 2 * x);
     const push = sm(Math.min(1, k / 0.28)) * (1 - sm(Math.max(0, Math.min(1, (k - 0.28) / 0.25))));
     const catchK = sm(Math.max(0, Math.min(1, (k - 0.45) / 0.25))) * (1 - sm(Math.max(0, (k - 0.85) / 0.15)));
@@ -367,11 +372,11 @@ export function updateRig(p, t, dt, other) {
     : undefined;
   if (m.airW > 0.01) aimLegs(m, p.group, m.airW, airLegs);
   // crouch with real knee bend (defense stance, gathers, landings, moves), wider base on D
-  const bend = Math.min(1, m.dip / 0.12), stanceW = (1 - m.airW) * (mv?.kind === "cross" || mv?.kind === "behind" ? 1 : 1 - Math.min(1, speed * 1.4) * 0.75); // escapes keep the wide sit while sliding
+  const bend = Math.min(1, m.dip / 0.12), stanceW = (1 - m.airW) * (mv?.kind === "cross" || mv?.kind === "behind" || mv?.kind === "legs" ? 1 : 1 - Math.min(1, speed * 1.4) * 0.75); // escapes keep the wide sit while sliding
   m.defLeg = lerp(m.defLeg || 0, def ? 1 : 0, ease(6));
   if (!({}).legs && stanceW > 0.01 && (bend > 0.02 || m.defLeg > 0.02)) {
     const c = Math.max(bend, m.defLeg * 0.85);
-    aimLegs(m, p.group, stanceW, () => [0.15 + 0.6 * c, 0.1 + 0.55 * c, 0.12 + 0.28 * Math.max(m.defLeg, mv?.kind === "behind" ? arc : 0) + (mv?.kind === "cross" ? 0.32 * Math.min(1, arc * 1.6) : 0)]);
+    aimLegs(m, p.group, stanceW, () => [0.15 + 0.6 * c, 0.1 + 0.55 * c, 0.12 + 0.28 * Math.max(m.defLeg, mv?.kind === "behind" ? arc : 0) + (mv?.kind === "cross" || mv?.kind === "legs" ? 0.36 * Math.min(1, arc * 1.6) : 0)]);
   }
   // defensive shuffle: steps synced to ground distance (no skating), lead foot reaches, trail foot closes,
   // forward/back motion becomes short choppy steps; feet never cross

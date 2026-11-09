@@ -46,7 +46,13 @@ const BTB = {
   STEER_AT: 0.72, // move progress after which your stick takes over (run out of it)
 };   // m/s -> ~0.9 m contest jump
 const MOVES = { swap: { key: "", label: "", dur: 0.4, burst: 0, hidden: true }, hop: { key: "", label: "", dur: 0.42, burst: 3.6, hidden: true }, cross: { key: "KeyQ", label: "Cross", dur: CROSS.DUR, burst: 0 }, behind: { key: "KeyX", label: "Behind", dur: 0.6, burst: 0 },
-  spin: { key: "KeyF", label: "Spin", dur: 0.65, burst: 4.2 }, stepback: { key: "KeyC", label: "Step back", dur: 0.48, burst: 4.0 } };
+  spin: { key: "KeyF", label: "Spin", dur: 0.65, burst: 4.2 }, stepback: { key: "KeyC", label: "Step back", dur: 0.48, burst: 4.0 },
+  legs: { key: "KeyV", label: "Btw legs", dur: 0.42, burst: 0 },      // between the legs: wide sit, ball under, short slide
+  hesi: { key: "KeyG", label: "Hesi", dur: 0.78, burst: 0 },          // stop, rise, freeze the defender, explode
+  snatch: { key: "KeyR", label: "Snatch", dur: 0.44, burst: 4.8 },    // snatch-back: yank the ball and hop away
+  sizeup: { key: "KeyT", label: "Size up", dur: 0.42, burst: 0 } };   // between the legs into a cross (combo)
+// ---- new dribble moves ----
+const LEGS = { GLIDE: 2.4 }, HESI = { STOP: 0.42, BURST: 6.2 }; // m/s slide, fraction spent stopped, m/s explode
 
 export function start(root, opts) {
   // online: host runs the game, guest sends inputs and draws the host's state
@@ -67,7 +73,7 @@ export function start(root, opts) {
       <button class="h3-steal off" id="hsteal" aria-label="Steal">Steal<small>F</small></button>
       <button class="h3-shoot" id="hshoot" aria-label="Shoot or block"><span id="hlbl">Shoot</span><small>E</small></button>
     </div>
-    <p class="small hp-help">Move: joystick or WASD · Shoot: hold E (or the button), let go in the <b style="color:var(--win)">green</b> · Moves: Q cross · X behind the back · F spin · C step back · On defense: E blocks · F steals</p>
+    <p class="small hp-help">Move: joystick or WASD · Shoot: hold E (or the button), let go in the <b style="color:var(--win)">green</b> · Moves: Q cross · X behind the back · F spin · C step back · V between the legs · G hesi · R snatch back · T size-up combo · On defense: E blocks · F steals</p>
     <div class="btns"><button class="ghost" id="hquit">Quit</button></div></div>`;
   const wrap = root.querySelector("#h3wrap");
 
@@ -249,12 +255,16 @@ export function start(root, opts) {
     let dir;
     if (kind === "cross") { pl.hand = 1 - pl.hand; const tR = flat(RIM).sub(flat(pl.pos)).normalize(), sR = new THREE.Vector3(tR.z, 0, -tR.x); dir = sR.multiplyScalar(pl.hand ? -1 : 1).addScaledVector(tR, CROSS.FWD); }
     else if (kind === "behind") { pl.hand = 1 - pl.hand; const away = flat(pl.pos).sub(flat(RIM)).normalize(); dir = away.multiplyScalar(BTB.BACK).addScaledVector(side, (pl.hand ? -1 : 1) * BTB.SIDE); }
+    else if (kind === "legs" || kind === "sizeup") { pl.hand = 1 - pl.hand; const tR = flat(RIM).sub(flat(pl.pos)).normalize(), sR = new THREE.Vector3(tR.z, 0, -tR.x); dir = sR.multiplyScalar(pl.hand ? -1 : 1); if (kind === "sizeup") pl.queue = "cross"; kind = "legs"; }
+    else if (kind === "hesi") { dir = flat(RIM).sub(flat(pl.pos)).normalize(); }
+    else if (kind === "snatch") { dir = flat(pl.pos).sub(flat(RIM)).normalize(); pl.space = t + 1.6; }
     else if (kind === "spin") { const s = Math.random() < .5 ? 1 : -1; pl.spinDir = s; dir = fwd.clone().addScaledVector(side, s * 0.8); }
     else { dir = fwd.clone().multiplyScalar(-1); pl.space = t + 1.4; }
-    pl.move = { kind, t0: t, dur: M.dur, dir: dir.normalize(), from: kind === "cross" || kind === "behind" ? 1 - pl.hand : pl.hand }; pl.moveCool = t + M.dur + 0.25;
+    pl.move = { kind, t0: t, dur: MOVES[kind].dur, dir: dir.normalize(), from: kind === "cross" || kind === "behind" || kind === "legs" ? 1 - pl.hand : pl.hand }; pl.moveCool = t + M.dur + 0.25;
+    if (kind === "legs" || kind === "hesi") pl.space = t + 1.0; // pull-up window right out of the move
     tone(kind === "spin" ? 260 : 420, .05, "triangle", .07);
     // ankle breaker: defender close and caught leaning
-    const o = players[1 - pl.team], gap = flat(o.pos).distanceTo(flat(pl.pos)), chance = { cross: .28, behind: .22, spin: .32, stepback: .22 }[kind];
+    const o = players[1 - pl.team], gap = flat(o.pos).distanceTo(flat(pl.pos)), chance = { cross: .28, behind: .22, spin: .32, stepback: .22, legs: .18, hesi: .3, snatch: .24 }[kind] || 0.2;
     if (gap < 1.5 && !o.stumble && o.y === 0 && Math.random() < chance) { o.stumble = t + 0.95; say(pl.team, { m: ["ANKLES!", 1000], bz: [20, 30, 20] }); }
   }
 
@@ -283,7 +293,7 @@ export function start(root, opts) {
     let steer = !pl.move;
     if (pl.move) {
       const k = (t - pl.move.t0) / pl.move.dur, kind = pl.move.kind;
-      if (k >= 1) { pl.move = null; steer = true; }
+      if (k >= 1) { pl.move = null; steer = true; if (pl.queue) { const q = pl.queue; pl.queue = null; pl.moveCool = 0; doMove(pl, q); } }
       else if (kind === "behind") { // smooth glide: eases in, carries through the wrap, eases out; then you can steer out of it
         const bell = Math.sin(Math.PI * Math.min(1, k / 0.95)) ** 1.5;
         const glide = pl.move.dir.clone().multiplyScalar(BTB.GLIDE * bell);
@@ -291,6 +301,11 @@ export function start(root, opts) {
         else { steer = want.lengthSq() > 0.05; if (!steer) pl.vel.lerp(glide, 1 - Math.exp(-dt * 14)); }
       }
       else if (kind === "swap") steer = true; // hand switch on the move: keep going
+      else if (kind === "legs") { const bell = Math.sin(Math.PI * Math.min(1, k)) ** 1.4; pl.vel.lerp(pl.move.dir.clone().multiplyScalar(LEGS.GLIDE * bell), 1 - Math.exp(-dt * 16)); }
+      else if (kind === "hesi") { // stop dead (rise, sell the pull-up), then explode at the rim
+        if (k < HESI.STOP) pl.vel.multiplyScalar(Math.exp(-dt * 14));
+        else { const g = Math.sin(Math.PI * 0.5 * Math.min(1, (k - HESI.STOP) / 0.25)); pl.vel.lerp(pl.move.dir.clone().multiplyScalar(HESI.BURST * g), 1 - Math.exp(-dt * 12)); if (k > 0.7) steer = want.lengthSq() > 0.05; }
+      }
       else if (kind === "cross") { // escape: lateral slide on a bell speed curve; stick takes over at the end
         const bell = Math.sin(Math.PI * Math.min(1, k / 0.95)) ** 1.4, glide = pl.move.dir.clone().multiplyScalar(CROSS.GLIDE * bell);
         if (k < 0.8 || want.lengthSq() < 0.05) pl.vel.lerp(glide, 1 - Math.exp(-dt * 16)); else steer = true;
@@ -345,7 +360,7 @@ export function start(root, opts) {
     // facing: toward motion, or the hoop when shooting / holding
     // defenders always square up to the ball handler and slide (no flipping between run direction and the man)
     const toO = flat(o.pos).sub(flat(pl.pos)), faceO = toO.lengthSq() > 0.09 ? Math.atan2(toO.x, toO.z) : pl.facing;
-    const face = pl.move?.kind === "stepback" || pl.move?.kind === "hop" || pl.move?.kind === "behind" || pl.move?.kind === "cross" ? Math.atan2(RIM.x - pl.pos.x, RIM.z - pl.pos.z)
+    const face = ["stepback", "hop", "behind", "cross", "legs", "hesi", "snatch"].includes(pl.move?.kind) ? Math.atan2(RIM.x - pl.pos.x, RIM.z - pl.pos.z)
       : !pl.hasBall && o.hasBall ? faceO
       : pl.vel.lengthSq() > 0.3 && !pl.shooting ? Math.atan2(pl.vel.x, pl.vel.z)
       : pl.hasBall || pl.shooting ? Math.atan2(RIM.x - pl.pos.x, RIM.z - pl.pos.z) : faceO;
@@ -367,7 +382,7 @@ export function start(root, opts) {
     if (ball.holder) {
       const pl = ball.holder; pl.group.updateMatrixWorld(true);
       if (pl.shooting || pl.dunking || pl.y > 0.02) { ball.p.copy(pl.dunking ? ((pl.palms || pl.hands)[1].getWorldPosition(tmp), tmp.add(new THREE.Vector3(0, BALL_R * 0.6, 0))) : handsMid(pl)); return; }
-      if (pl.move && (pl.move.kind === "cross" || pl.move.kind === "behind" || pl.move.kind === "swap")) {
+      if (pl.move && (pl.move.kind === "cross" || pl.move.kind === "behind" || pl.move.kind === "swap" || pl.move.kind === "legs")) {
         // held in the palm → one low bounce across → caught in the other palm
         const k = Math.min(1, (t - pl.move.t0) / pl.move.dur), kind = pl.move.kind, P = pl.palms || pl.hands, from = pl.move.from;
         P[from].getWorldPosition(tmp); P[1 - from].getWorldPosition(tmp2);
@@ -379,7 +394,7 @@ export function start(root, opts) {
           ball.p.lerpVectors(tmp, tmp2, e);
           ball.p.y = e < 0.5 ? y0 + (BALL_R - y0) * (e / 0.5) ** 2 : BALL_R + (y1 - BALL_R) * (1 - (1 - (e - 0.5) / 0.5) ** 2);
           const f = fwdOf(pl);
-          if (kind === "behind") ball.p.addScaledVector(f, -0.45 * Math.sin(Math.PI * e)); else ball.p.addScaledVector(f, 0.12 * Math.sin(Math.PI * e));
+          if (kind === "behind") ball.p.addScaledVector(f, -0.45 * Math.sin(Math.PI * e)); else if (kind === "legs") ball.p.addScaledVector(f, -0.02); else ball.p.addScaledVector(f, 0.12 * Math.sin(Math.PI * e));
           if (e >= 0.5 && !pl.moveBounce) { pl.moveBounce = true; if (pl.team === ME) tone(95, .04, "sine", .05); } else if (e < 0.5) pl.moveBounce = false;
         }
         ball.spin += dt * 6;
@@ -457,7 +472,7 @@ export function start(root, opts) {
       if (t > ai.thinkAt) { ai.thinkAt = t + 0.8 + Math.random(); const ang = (Math.random() - .5) * 2.4, r = Math.random() < .35 ? 7.2 : 1.2 + Math.random() * 4; ai.target.set(Math.sin(ang) * r, 0, Math.cos(ang) * r + 0.4); if (!ai.shootAt) ai.shootAt = t + 1.4 + Math.random() * 2.5; }
       [mx, mz] = toV(ai.target);
       const gap = flat(you.pos).distanceTo(flat(me.pos));
-      if (gap < 1.4 && t > ai.moveCool && Math.random() < dt * 1.2) { doMove(me, ["cross", "behind", "spin", "stepback"][Math.random() * 4 | 0]); ai.moveCool = t + 1.2; }
+      if (gap < 1.4 && t > ai.moveCool && Math.random() < dt * 1.2) { doMove(me, ["cross", "behind", "spin", "stepback", "legs", "hesi", "snatch", "sizeup"][Math.random() * 8 | 0]); ai.moveCool = t + 1.2; }
       if (t > ai.shootAt && me.y === 0 && !me.shooting) { ai.holdUntil = t + 99; ai.shootAt = t + 99; ai.releaseAt = GREEN_C + (Math.random() - .5) * 0.22; }
       shoot = t < ai.holdUntil && !(me.shooting && me.meter >= ai.releaseAt);
       if (me.shooting && me.meter >= ai.releaseAt) ai.holdUntil = 0;
