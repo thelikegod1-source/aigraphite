@@ -533,9 +533,17 @@ function rimReach(m, p, side, both) {
 function dunkArm(m, p, side) {
   const D = p.dunkSeq || {}, ph = D.phase, u = ph === "rise" ? (D.u ?? 0) : 0, ballSide = side < 0;
   const sm = x => { x = Math.max(0, Math.min(1, x)); return x * x * (3 - 2 * x); };
+  const style = p.dunkStyle || 0, two = style === 1 || style === 2;
+  if (style === 0) { // reference cock-back: ball low at the hip -> one big arc out and over the top -> throw it through the front of the rim
+    if (!ballSide) return ph === "rise" ? [V(side * 0.35, 0.8, 0.5), V(side * 0.15, 0.95, 0.3)] : [V(side * 0.45, -0.5, 0.75), V(side * 0.1, 0.2, 0.98)]; // off arm up and out
+    if (ph === "approach" || ph === "gather") return [V(side * 0.3, -0.92, 0.25), V(side * 0.12, -0.75, 0.65)]; // carried at the hip
+    const th = THREE.MathUtils.lerp(0.35, 3.55, sm(u / 0.75)); // angle from straight down: down-front -> forward -> overhead -> cocked behind
+    const arcUp = V(side * 0.3, -Math.cos(th), Math.sin(th)).normalize();
+    const reach = rimReach(m, p, side, false), r = sm((u - 0.78) / 0.22);
+    return [arcUp.clone().lerp(reach[0], r).normalize(), arcUp.clone().lerp(reach[1], r).normalize()]; // long arm through the arc, extends at the rim
+  }
   const gather = [V(side * 0.35, -0.7, 0.6), V(-side * 0.45, 0.25, 0.85)];
   if (ph === "approach" || ph === "gather") return gather;
-  const style = p.dunkStyle || 0, two = style === 1 || style === 2;
   let cock;
   if (style === 2) cock = [V(side * 0.45, 0.75, 0.2), V(-side * 0.4, 0.85, 0.1)];
   else if (style === 3 && ballSide) { const a = -Math.PI / 2 + Math.min(1, u / 0.8) * Math.PI * 1.7; cock = [V(-0.2, Math.sin(a), Math.cos(a)), V(-0.1, Math.sin(a + 0.35), Math.cos(a + 0.35))]; }
@@ -549,7 +557,8 @@ function dunkArm(m, p, side) {
 }
 // on the rim: grip pose; for ~0.22 s after the slam the forearms pull down through the rim, then ease back to the grip
 function hangArm(m, p, side, t) {
-  const g = rimReach(m, p, side, true), e = p.slam ? t - p.slam : 9, pull = e < 0.22 ? Math.sin(Math.PI * e / 0.22) * 0.55 : 0;
+  if ((p.dunkStyle || 0) === 0 && side > 0) return [V(0.6, 0.55, 0.4), V(0.3, 0.85, 0.3)]; // one-hand flush: off arm stays up and out
+  const g = rimReach(m, p, side, (p.dunkStyle || 0) !== 0), e = p.slam ? t - p.slam : 9, pull = e < 0.22 ? Math.sin(Math.PI * e / 0.22) * 0.55 : 0;
   return [g[0], g[1].clone().lerp(V(side * 0.05, -0.6, 0.8), pull).normalize()];
 }
 // slam: ball arm whips forward-down through the rim (wrist snaps), off arm stays up

@@ -38,6 +38,7 @@ const DUNK = {
   PEAK: 0.78,      // body lift at the top (standing reach ~2.4 m + this puts the hand above the rim)
   STANDOFF: 0.42,  // where the body ends up, in front of the rim toward the takeoff side
   HANG: 0.32,      // brief hang on the rim after the slam
+  FLUSH_HANG: 0.1, // one-hand cock-back flush: barely touches the rim, then falls away (as in the reference)
   SAG: 0.1,        // body sinks this much while hanging
   LAYUP_BEFORE: 0.55, // letting go of E before this much of the rise turns it into a layup
 };
@@ -238,7 +239,7 @@ export function start(root, opts) {
       if (d <= DUNK.GATHER_AT || t - D.t0 > 0.6) { D.approach = false; D.t0 = t; D.p0 = flat(pl.pos); const tw = flat(pl.pos).sub(flat(RIM)).normalize(); D.p1 = flat(RIM).addScaledVector(tw, DUNK.STANDOFF); }
       return;
     }
-    const e = t - D.t0, G = DUNK.GATHER, Rz = DUNK.RISE, H = DUNK.HANG;
+    const e = t - D.t0, G = DUNK.GATHER, Rz = DUNK.RISE, H = (pl.dunkStyle || 0) === 0 ? DUNK.FLUSH_HANG : DUNK.HANG;
     pl.vy = 0;
     if (e < G) { // gather: plant, momentum bleeds off, small step toward the rim
       const k = e / G; pl.pos.copy(D.p0).lerp(D.p1, 0.08 * smooth01(k)); pl.y = 0; pl.vel.multiplyScalar(0.8); D.phase = "gather"; D.u = k;
@@ -376,7 +377,7 @@ export function start(root, opts) {
         const far = distToRim(pl.pos) > DUNK.GATHER_AT;
         pl.dunkSeq = { t0: t, p0: from, p1: flat(RIM).addScaledVector(toward, DUNK.STANDOFF), slammed: false, approach: far };
         pl.rimPoint = RIM.clone().addScaledVector(new THREE.Vector3(toward.x, 0, toward.z), RIM_R * 0.8).setY(RIM.y + 0.04); // front of the rim
-        pl.dunkStyle = Math.random() * 4 | 0; pl.dunking = true; pl.shooting = true; pl.meter = 0; pl.shotT = t; pl.move = null;
+        pl.dunkStyle = Math.random() < 0.55 ? 0 : 1 + (Math.random() * 3 | 0); /* the reference cock-back flush most often */ pl.dunking = true; pl.shooting = true; pl.meter = 0; pl.shotT = t; pl.move = null;
       }
       else if (pl.hasBall) { pl.shooting = true; pl.meter = 0; pl.shotT = t; pl.move = null; pl.jumpAt = t + SHOT.GATHER; } // gather, then rise
       else { // E on defense: contest jump that lunges at the shooter (not straight up in place)
