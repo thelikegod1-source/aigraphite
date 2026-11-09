@@ -273,7 +273,7 @@ export function updateRig(p, t, dt, other) {
   }
   // dribble clip uses the right hand; mirror for left-hand dribbles.
   // During a cross the swap happens when the ball is at the floor, mid-move.
-  const hand = mv && (mv.kind === "cross" || mv.kind === "behind" || mv.kind === "swap" || mv.kind === "legs") && mk < 0.5 ? mv.from : p.hand;
+  const hand = mv && ((mv.kind === "cross" || mv.kind === "behind" || mv.kind === "swap" || mv.kind === "legs") && mk < 0.5 || mv.kind === "snatch" && mk < 0.5) ? mv.from : p.hand;
   // dribble rhythm (drives the arm here and the ball in the game loop)
   p.dribU = ((p.dribU ?? 0) + dt * (DRIB.HZ_STAND + (DRIB.HZ_RUN - DRIB.HZ_STAND) * speed)) % 1;
   m.mixer.update(dt);
@@ -373,9 +373,11 @@ export function updateRig(p, t, dt, other) {
         : [V(side * 0.7, -0.35, 0.45), V(side * 0.2, 0.1, 0.95)], Math.max(hold, go));
     } else if (mv.kind === "snatch") { // reach the ball WAY out low in front during the lunge, then yank it back to the hip; off arm balances
       const reachK = win(0, 0.25) * (1 - win(0.38, 0.5)), yank = win(0.42, 0.55) * (1 - win(0.9, 1));
-      aimArms(m, p.group, side => side === sBall
-        ? (reachK > yank ? [V(side * 0.35, -0.55, 0.75), V(side * 0.2, -0.8, 0.55)] : [V(side * 0.42, -0.9, -0.25), V(side * 0.1, -0.45, 0.9)])
-        : [V(side * 0.35, -0.2, 0.9), V(side * 0.1, 0.25, 0.95)], Math.max(reachK, yank));
+      const sOld = mv.from === 1 ? -1 : 1, sNew = -sOld;
+      aimArms(m, p.group, side => reachK > yank
+        ? (side === sOld ? [V(side * 0.35, -0.55, 0.75), V(side * 0.2, -0.8, 0.55)] : [V(side * 0.35, -0.2, 0.9), V(side * 0.1, 0.25, 0.95)]) // lunge: old hand reaches out, off arm balances
+        : (side === sNew ? [V(side * 0.42, -0.9, -0.25), V(side * 0.1, -0.45, 0.9)] : [V(side * 0.4, -0.55, 0.55), V(side * 0.1, -0.2, 0.95)]), // snatch: new hand yanks it to its hip
+        Math.max(reachK, yank));
     } else if (mv.kind === "spin") { // spin: ball tucked tight on the hip, off arm flung out wide for momentum
       aimArms(m, p.group, side => side === sBall ? [V(side * 0.35, -0.95, -0.05), V(-side * 0.15, -0.3, 0.94)] : [V(side * 0.95, 0.15, 0.1), V(side * 0.8, 0.35, 0.35)], bell);
     } else if (mv.kind === "stepback" || mv.kind === "hop") { // step back: ball ripped back to the hip, off arm extended to create space

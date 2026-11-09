@@ -265,13 +265,14 @@ export function start(root, opts) {
     else if (kind === "behind") { pl.hand = 1 - pl.hand; const away = flat(pl.pos).sub(flat(RIM)).normalize(); dir = away.multiplyScalar(BTB.BACK).addScaledVector(side, (pl.hand ? -1 : 1) * BTB.SIDE); }
     else if (kind === "legs" || kind === "sizeup") { pl.hand = 1 - pl.hand; const tR = flat(RIM).sub(flat(pl.pos)).normalize(), sR = new THREE.Vector3(tR.z, 0, -tR.x); dir = sR.multiplyScalar(pl.hand ? -1 : 1); if (kind === "sizeup") pl.queue = "cross"; kind = "legs"; }
     else if (kind === "hesi") { dir = flat(RIM).sub(flat(pl.pos)).normalize(); }
-    else if (kind === "snatch") { // lunge at the defender reaching the ball out low, then explode back (stored as the push direction)
+    else if (kind === "snatch") { // lunge at the defender reaching the ball out low, then explode back into the OTHER hand
+      pl.hand = 1 - pl.hand;
       const away = flat(pl.pos).sub(flat(RIM)).normalize(), sd = new THREE.Vector3(-away.z, 0, away.x).multiplyScalar(pl.hand ? 1 : -1);
       dir = away.add(sd.multiplyScalar(SNATCH.SIDE)); pl.space = t + 1.8;
     }
     else if (kind === "spin") { const s = Math.random() < .5 ? 1 : -1; pl.spinDir = s; dir = fwd.clone().addScaledVector(side, s * 0.8); }
     else { dir = fwd.clone().multiplyScalar(-1); pl.space = t + 1.4; }
-    pl.move = { kind, t0: t, dur: MOVES[kind].dur, dir: dir.normalize(), from: kind === "cross" || kind === "behind" || kind === "legs" ? 1 - pl.hand : pl.hand }; pl.moveCool = t + CHAIN.COOL; pl.lastMove = kind; pl.lastMoveT = t; pl.lastDur = MOVES[kind].dur;
+    pl.move = { kind, t0: t, dur: MOVES[kind].dur, dir: dir.normalize(), from: kind === "cross" || kind === "behind" || kind === "legs" || kind === "snatch" ? 1 - pl.hand : pl.hand }; pl.moveCool = t + CHAIN.COOL; pl.lastMove = kind; pl.lastMoveT = t; pl.lastDur = MOVES[kind].dur;
     if (kind === "legs" || kind === "hesi") pl.space = t + 1.0; // pull-up window right out of the move
     tone(kind === "spin" ? 260 : 420, .05, "triangle", .07);
     // ankle breaker: defender close and caught leaning
@@ -398,7 +399,11 @@ export function start(root, opts) {
   function stepBall(dt) {
     if (ball.holder) {
       const pl = ball.holder; pl.group.updateMatrixWorld(true);
-      if (pl.move?.kind === "snatch") { (pl.palms || pl.hands)[pl.hand].getWorldPosition(tmp); ball.p.set(tmp.x, tmp.y - BALL_R, tmp.z); return; } // snatch: ball rides in the yanking hand through the hop
+      if (pl.move?.kind === "snatch") { // reached out in the old hand during the lunge, yanked across into the new hand on the push
+        const P = pl.palms || pl.hands, k = (t - pl.move.t0) / pl.move.dur, a = Math.min(1, Math.max(0, (k - SNATCH.LUNGE_END) / 0.2)), e = a * a * (3 - 2 * a);
+        P[pl.move.from].getWorldPosition(tmp); P[1 - pl.move.from].getWorldPosition(tmp2);
+        ball.p.lerpVectors(tmp, tmp2, e); ball.p.y -= BALL_R; return;
+      }
       if (pl.shooting || pl.dunking || pl.y > 0.02) { ball.p.copy(pl.dunking ? ((pl.palms || pl.hands)[1].getWorldPosition(tmp), tmp.add(new THREE.Vector3(0, BALL_R * 0.6, 0))) : handsMid(pl)); return; }
       if (pl.move && (pl.move.kind === "cross" || pl.move.kind === "behind" || pl.move.kind === "swap" || pl.move.kind === "legs")) {
         // held in the palm → one low bounce across → caught in the other palm
