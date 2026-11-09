@@ -292,6 +292,7 @@ export function updateRig(p, t, dt, other) {
   m.prevFacing = p.facing;
   if (dt > 0) m.frS = lerp(m.frS || 0, Math.max(-6, Math.min(6, fr)), ease(5));
   if (p.hasBall && !def && speed > 0.5) leanS += Math.max(-0.15, Math.min(0.15, (m.frS || 0) * 0.04 * speed)) * BANK; // gentle bank into turns only when running with the ball
+  if (p.blockT && t - p.blockT < 0.6 && p.y > 0.02) leanF = 0.28; // contest: body leans into the shooter
   if (p.stumble > t) { leanF = -0.4; leanS = Math.sin(t * 4) * 0.22; }
   const air = p.y > 0.02;
   if (p.shooting && !air) dip = 0.12; // gather
@@ -318,7 +319,7 @@ export function updateRig(p, t, dt, other) {
       : slam ? tv.set(side * 0.1, 0.6, 0.8) // throw it down
       : follow && !p.hasBall ? followThrough(side, Math.min(1, followT / 0.25))
       : p.shooting && p.hasBall ? shotForm(side, m.rise)
-      : tv.set(side * 0.1, 1, 0.15), m.upW); // block: hands straight up
+      : (side < 0 ? tv.set(-0.05, 1, 0.35) : tv.set(0.55, -0.1, -0.55)), m.upW); // contest: one arm straight up at the ball, the other back for balance
   // off arm while dribbling: an arm bar out front to shield the ball (the dribble arm stays on the clip)
   const guard = p.hasBall && !p.shooting && !p.dunking && !(mv && (mv.kind === "cross" || mv.kind === "behind" || mv.kind === "swap")) ? 1 : 0;
   m.guardW = lerp(m.guardW || 0, guard, ease(8));
@@ -360,7 +361,11 @@ export function updateRig(p, t, dt, other) {
   // legs tuck a little in the air, hang straight on the rim, split on the way up for a dunk
   m.airW = lerp(m.airW || 0, air && !hang ? 1 : 0, ease(10));
   // dunks: lead knee drives up, back leg trails; otherwise a light tuck
-  if (m.airW > 0.01) aimLegs(m, p.group, m.airW, p.dunking || hang ? (hang ? () => [0.1, 0.15, 0.05] : side => side > 0 ? [1.1, 1.3, 0.05] : [-0.25, 0.7, 0.05]) : undefined);
+  const airLegs = p.dunking || hang ? (hang ? () => [0.1, 0.15, 0.05] : side => side > 0 ? [1.1, 1.3, 0.05] : [-0.25, 0.7, 0.05])
+    : (p.shooting || follow) ? side => [0.32 + (side > 0 ? 0.08 : 0), 0.38, 0.06] // jumper: slight forward kick, knees soft
+    : (p.blockT && t - p.blockT < 0.7) ? side => [-0.05, 0.75, 0.1] // contest: legs trail back as he lunges
+    : undefined;
+  if (m.airW > 0.01) aimLegs(m, p.group, m.airW, airLegs);
   // crouch with real knee bend (defense stance, gathers, landings, moves), wider base on D
   const bend = Math.min(1, m.dip / 0.12), stanceW = (1 - m.airW) * (mv?.kind === "cross" || mv?.kind === "behind" ? 1 : 1 - Math.min(1, speed * 1.4) * 0.75); // escapes keep the wide sit while sliding
   m.defLeg = lerp(m.defLeg || 0, def ? 1 : 0, ease(6));
@@ -401,8 +406,9 @@ export function updateRig(p, t, dt, other) {
     let bx = 0, by = -0.3; if (p.ballLocal) { bx = Math.max(-0.9, Math.min(0.9, p.ballLocal.x)); by = Math.max(-0.7, Math.min(0.2, p.ballLocal.y - 1.1)); }
     aimArms(m, p.group, side => {
       const hi = Math.max(0, side * m.dSwap), lo = 1 - hi, dig = Math.sin(t * 6.5 + side * 2.1) * 0.06;
-      const upArm = mixV(V(side * 0.55 + bx * 0.25, by * 0.6 - 0.35, 0.75), V(side * 0.35, 0.75, 0.35), hi);
-      const fore = mixV(V(bx * 0.35 + side * 0.1, by + dig, 1), V(side * 0.05, 1, 0.25 + dig), hi);
+      // low hand: wide to the side, a little toward the ball (Park-style arms-out stance); high hand: up to contest
+      const upArm = mixV(V(side * 0.9 + bx * 0.15, -0.25 + by * 0.25, 0.35), V(side * 0.35, 0.75, 0.35), hi);
+      const fore = mixV(V(side * 0.6 + bx * 0.25, -0.15 + by * 0.4 + dig, 0.8), V(side * 0.05, 1, 0.25 + dig), hi);
       return [upArm, fore];
     }, m.defW);
   }

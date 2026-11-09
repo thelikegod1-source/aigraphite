@@ -22,6 +22,8 @@ const BLOCK_V = 4.2;
 const CAM = { MIN_DIST: 6.3, MAX_DIST: 10.5, SPREAD: 1.1, HEIGHT_BASE: 1.6, HEIGHT_PER_M: 0.52, LOOK_Y: 1.0,
   TOWARD_RIM: 0.3, MAX_YAW: 0.85, YAW_RATE: 1.6, ZOOM_RATE: 2.2, FOLLOW_RATE: 4 };
 // ---- movement weight: speed changes at real rates (per second), plants before cutting back ----
+// ---- 2K-style jumping: shooter fades a touch, contests lunge at the shooter ----
+const JUMPS = { FADE: 0.55, CONTEST_LUNGE: 2.2, CONTEST_RANGE: 3.0 }; // m/s back-drift on a jumper, m/s lunge, max lunge distance (m)
 const MOVE = { ACCEL: 15, DECEL: 22, AIR: 2.5 }; // m/s^2
 // ---- dunk: a scripted sequence, never a position jump. Times in seconds, heights in meters ----
 const DUNK = {
@@ -323,9 +325,16 @@ export function start(root, opts) {
         pl.dunkStyle = Math.random() * 4 | 0; pl.dunking = true; pl.shooting = true; pl.meter = 0; pl.shotT = t; pl.move = null;
       }
       else if (pl.hasBall) { pl.shooting = true; pl.meter = 0; pl.shotT = t; pl.move = null; pl.jumpAt = t + SHOT.GATHER; } // gather, then rise
-      else { pl.vy = BLOCK_V; pl.blockT = t; } // E on defense: jump / block
+      else { // E on defense: contest jump that lunges at the shooter (not straight up in place)
+        pl.vy = BLOCK_V; pl.blockT = t;
+        const to = flat(o.pos).sub(flat(pl.pos)), d = to.length();
+        if (d > 0.3 && d < JUMPS.CONTEST_RANGE) pl.vel.copy(to.normalize().multiplyScalar(JUMPS.CONTEST_LUNGE * Math.min(1, d / 1.2)));
+      }
     }
-    if (pl.jumpAt && t >= pl.jumpAt) { pl.vy = SHOT.JUMP_V; pl.jumpAt = 0; }
+    if (pl.jumpAt && t >= pl.jumpAt) { // rise with a slight fade away from the hoop (compact Park-style jumper)
+      pl.vy = SHOT.JUMP_V; pl.jumpAt = 0;
+      const away = flat(pl.pos).sub(flat(RIM)); if (away.lengthSq() > 0.01) pl.vel.copy(away.normalize().multiplyScalar(JUMPS.FADE));
+    }
     if (pl.dunkSeq) stepDunk(pl, rel);
     else if (!ground || pl.vy > 0) { pl.vy -= GRAV * dt; pl.y = Math.max(0, pl.y + pl.vy * dt); if (pl.y === 0) { pl.vy = 0; if (!pl.hasBall) pl.shooting = false; pl.dunking = false; } }
     if (pl.shooting && pl.hasBall && !pl.dunking) {
