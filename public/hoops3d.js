@@ -24,6 +24,8 @@ const CAM = { MIN_DIST: 6.3, MAX_DIST: 10.5, SPREAD: 1.1, HEIGHT_BASE: 1.6, HEIG
 // ---- movement weight: speed changes at real rates (per second), plants before cutting back ----
 // ---- 2K-style jumping: shooter fades a touch, contests lunge at the shooter ----
 const JUMPS = { FADE: 0.55, CONTEST_LUNGE: 2.2, CONTEST_RANGE: 3.0 }; // m/s back-drift on a jumper, m/s lunge, max lunge distance (m)
+// poster dunks: contest a dunk at the rim and you get thrown down
+const POSTER = { RANGE: 1.4, DOWN: 1.7 }; // m from the dunker, s on the floor (fall + lie + get up)
 const MOVE = { ACCEL: 15, DECEL: 22, AIR: 2.5 }; // m/s^2
 // ---- dunk: a scripted sequence, never a position jump. Times in seconds, heights in meters ----
 const DUNK = {
@@ -219,6 +221,13 @@ export function start(root, opts) {
     ball.holder = null; pl.hasBall = false; ball.p.copy(tmp).y = Math.max(tmp.y - BALL_R, RIM.y + 0.12);
     const fall = 0.09; ball.v.set((RIM.x - ball.p.x) / fall, -4.5, (RIM.z - ball.p.z) / fall).clampLength(0, 9); ball.cool = 0.5; pl.slam = t;
     ball.shot = { team: pl.team, value: 1, dunk: true }; cam.shake = 0.35; rimShake = t; pl.shooting = false; pl.dunking = false; buzz(40); tone(140, .12, "sawtooth", .12);
+    // poster: a defender contesting at the rim gets thrown down on his back
+    const o = players[1 - pl.team], gap = flat(o.pos).distanceTo(flat(pl.pos));
+    if ((!FREE || aiOn) && gap < POSTER.RANGE && (o.y > 0.15 || (o.blockT && t - o.blockT < 0.6))) {
+      o.down = t; o.stumble = t + POSTER.DOWN; o.vy = Math.min(o.vy, 0); o.blockT = 0;
+      o.downDir = flat(o.pos).sub(flat(pl.pos)).normalize(); o.vel.copy(o.downDir).multiplyScalar(2.2); // knocked back away from the dunker
+      cam.shake = 0.6; say(pl.team, { m: ["POSTERIZED!", 1300], bz: [40, 30, 60] }); say(o.team, { m: ["GOT POSTERIZED", 1100] });
+    }
   }
   const smooth01 = x => x * x * (3 - 2 * x);
   function stepDunk(pl, rel, dt) {
@@ -311,6 +320,7 @@ export function start(root, opts) {
     const want = world ? new THREE.Vector3(moveX, 0, moveZ) : camToWorld(moveX, moveZ); if (want.lengthSq() > 1) want.normalize();
     let sp = (pl.hasBall ? SPEED * 0.9 : SPEED) * (ground ? 1 : 0.3) * (pl.burst > t ? 1.3 : 1);
     if (pl.stumble > t) sp *= 0.08;
+    if (pl.down && t - pl.down < POSTER.DOWN) { pl.vel.multiplyScalar(Math.exp(-dt * 5)); }
     if (pl.shooting && ground) sp *= 0.2;
     if (pl.buffer) { if (t - pl.buffer.t > CHAIN.BUFFER) pl.buffer = null; else if (!pl.move || (t - pl.move.t0) / pl.move.dur >= CHAIN.AT) { const b = pl.buffer; pl.buffer = null; doMove(pl, b.kind); } }
     let steer = !pl.move;
@@ -649,7 +659,7 @@ export function start(root, opts) {
   function sendState(dt) {
     sendAcc += dt; if (sendAcc < 0.045) return; sendAcc = 0;
     NET.send({ st: 1, P: players.map(p => [+p.pos.x.toFixed(3), +p.pos.z.toFixed(3), +p.y.toFixed(3), +p.vel.x.toFixed(2), +p.vel.z.toFixed(2), +p.facing.toFixed(3), bits(p), p.hand,
-      p.move ? p.move.kind : 0, p.move ? +((t - p.move.t0) / p.move.dur).toFixed(3) : 0, p.move?.from ?? 0, p.stumble > t ? +(p.stumble - t).toFixed(2) : 0, age(p.released), age(p.blockT), age(p.slam), +(p.meter || 0).toFixed(3), p.spinDir || 1, p.hang > t ? 1 : 0, age(p.reachT), p.dunkStyle || 0]),
+      p.move ? p.move.kind : 0, p.move ? +((t - p.move.t0) / p.move.dur).toFixed(3) : 0, p.move?.from ?? 0, p.stumble > t ? +(p.stumble - t).toFixed(2) : 0, age(p.released), age(p.blockT), age(p.slam), +(p.meter || 0).toFixed(3), p.spinDir || 1, p.hang > t ? 1 : 0, age(p.reachT), p.dunkStyle || 0, age(p.down)]),
       B: [+ball.p.x.toFixed(3), +ball.p.y.toFixed(3), +ball.p.z.toFixed(3), +ball.v.x.toFixed(2), +ball.v.y.toFixed(2), +ball.v.z.toFixed(2), ball.holder ? ball.holder.team : -1],
       o: offense, c: +possClock.toFixed(1) }, true);
   }
@@ -676,7 +686,7 @@ export function start(root, opts) {
       p.hasBall = !!(a[6] & 1); p.shooting = !!(a[6] & 2); p.dunking = !!(a[6] & 4); p.hand = a[7]; p.spinDir = a[16];
       p.move = a[8] ? { kind: a[8], dur: MOVES[a[8]].dur, t0: t - a[9] * MOVES[a[8]].dur, from: a[10] } : null;
       p.stumble = a[11] ? t + a[11] : 0; p.released = a[12] >= 0 ? t - a[12] : 0; p.blockT = a[13] >= 0 ? t - a[13] : 0; p.slam = a[14] >= 0 ? t - a[14] : 0;
-      p.meter = i === ME && gMeter ? gMeter : a[15]; p.hang = a[17] ? t + 0.05 : 0; p.reachT = a[18] >= 0 ? t - a[18] : 0; p.dunkStyle = a[19];
+      p.meter = i === ME && gMeter ? gMeter : a[15]; p.hang = a[17] ? t + 0.05 : 0; p.reachT = a[18] >= 0 ? t - a[18] : 0; p.dunkStyle = a[19]; p.down = a[20] >= 0 ? t - a[20] : 0;
     });
     const h = snap.B[6]; ball.holder = h >= 0 ? players[h] : null;
     if (snap.o !== offense) { offense = snap.o; posUI(offense); }

@@ -419,7 +419,17 @@ export function updateRig(p, t, dt, other) {
     });
   }
   // keep the lowest foot on the court so bent knees lower the body instead of sinking the feet
-  if (!({}).ground && !air && !hang && m.ankle != null) {
+  // knocked down (posterized): fall back pivoting on the heels, lie a beat, roll up; overrides foot grounding
+  const downT = p.down ? t - p.down : 9;
+  if (downT < 1.7) {
+    const fall = downT < 0.35 ? smoothK(downT / 0.35) : downT < 1.15 ? 1 : 1 - smoothK((downT - 1.15) / 0.55);
+    m.root.rotation.x = -1.42 * fall; // onto his back
+    m.root.position.y = m.baseY + 0.12 * fall;
+    aimArms(m, p.group, side => [V(side * 0.85, 0.2, 0.1), V(side * 0.7, 0.4, -0.2)], fall); // arms flung out
+    aimLegs(m, p.group, fall, side => [0.25 + (side > 0 ? 0.25 : 0), 0.5, 0.15]); // knees up
+    m.wasDown = true;
+  } else if (m.wasDown) { m.root.rotation.x = 0; m.wasDown = false; }
+  if (!({}).ground && !air && !hang && m.ankle != null && downT >= 1.7) {
     p.group.updateMatrixWorld(true);
     m.b.footL.getWorldPosition(tmpA); m.b.footR.getWorldPosition(tmpB);
     const low = Math.min(tmpA.y, tmpB.y) - p.group.position.y;
@@ -468,6 +478,7 @@ export function updateRig(p, t, dt, other) {
   p.handL = p.hands[0]; p.handR = p.hands[1];
 }
 const lerp = (a, b, k) => a + (b - a) * k;
+const smoothK = x => { x = Math.max(0, Math.min(1, x)); return x * x * (3 - 2 * x); };
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const mixV = (a, b, k) => a.clone().lerp(b, k);
 // jump shot, by how far the ball has risen (0 = gather at the chest, 1 = set point above the forehead).
