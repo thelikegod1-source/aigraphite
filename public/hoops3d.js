@@ -18,6 +18,11 @@ const SHOT = {
   BACKSPIN: 2.4,       // revolutions per second
 };
 const BLOCK_V = 4.2;
+// ---- camera (broadcast / Park style) ----
+const CAM = { MIN_DIST: 6.3, MAX_DIST: 10.5, SPREAD: 1.1, HEIGHT_BASE: 1.6, HEIGHT_PER_M: 0.52, LOOK_Y: 1.0,
+  TOWARD_RIM: 0.3, MAX_YAW: 0.85, YAW_RATE: 1.6, ZOOM_RATE: 2.2, FOLLOW_RATE: 4 };
+// ---- movement weight: speed changes at real rates (per second), plants before cutting back ----
+const MOVE = { ACCEL: 15, DECEL: 22, AIR: 2.5 }; // m/s^2
 // ---- dunk: a scripted sequence, never a position jump. Times in seconds, heights in meters ----
 const DUNK = {
   RANGE: 1.9,      // start a dunk within this distance of the rim
@@ -290,7 +295,11 @@ export function start(root, opts) {
       }
       else pl.vel.copy(pl.move.dir).multiplyScalar(MOVES[kind].burst * (1 - k * 0.5));
     }
-    if (steer) pl.vel.lerp(want.clone().multiplyScalar(sp), ground ? 0.25 : 0.05);
+    if (steer) { // momentum: accelerate toward the stick at a fixed rate, brake harder (cutting back = plant, then go)
+      const tgt = want.clone().multiplyScalar(sp), dv = tgt.sub(pl.vel);
+      const braking = want.lengthSq() < 0.01 || want.dot(pl.vel) < 0;
+      pl.vel.add(dv.clampLength(0, (ground ? (braking ? MOVE.DECEL : MOVE.ACCEL) : MOVE.AIR) * dt));
+    }
     // dribbling left with the ball in the right hand (or right with the left): switch hands in front
     if (pl.hasBall && !pl.move && !pl.shooting && ground && !(pl.swapCool > t)) {
       const f = flat(RIM).sub(flat(pl.pos)).normalize(), lateral = pl.vel.x * f.z - pl.vel.z * f.x; // + = toward your left
@@ -522,18 +531,24 @@ export function start(root, opts) {
   const netMesh = scene.getObjectByName("net"), rimMesh = scene.getObjectByName("rim");
   // camera: follows the action (you + the ball), turns slowly so it never whips around under the rim,
   // pulls in when you shoot, shakes on dunks
-  const cam = { yaw: 0, dist: 6.4, look: new THREE.Vector3(0, 1.5, 4), shake: 0 };
+  const cam = { yaw: 0, dist: 9, look: new THREE.Vector3(0, 1, 4), shake: 0 };
   function updateCamera(dt, me) {
     const ov = opts.debug && window.__h3?.cam; if (ov) { camera.position.set(me.pos.x + ov[0], ov[1], me.pos.z + ov[2]); camera.lookAt(me.pos.x, me.y + (ov[3] ?? 0.95), me.pos.z); return; }
-    const focus = ball.holder ? ball.holder.pos : ball.p, mid = flat(me.pos).lerp(flat(focus), 0.4);
-    const out = flat(mid).sub(flat(RIM));
-    if (out.length() > 1.6) { const want = Math.max(-1.0, Math.min(1.0, Math.atan2(out.x, out.z))); cam.yaw += Math.atan2(Math.sin(want - cam.yaw), Math.cos(want - cam.yaw)) * (1 - Math.exp(-dt * 2.2)); }
-    const sep = flat(me.pos).distanceTo(flat(focus)), shooting = me.shooting && me.hasBall;
-    cam.dist += ((shooting ? 5.2 : 6.0 + Math.min(3, sep) * 0.45) - cam.dist) * (1 - Math.exp(-dt * 3));
-    const dir = new THREE.Vector3(Math.sin(cam.yaw), 0, Math.cos(cam.yaw)), k = 1 - Math.exp(-dt * 5);
-    const want = mid.clone().addScaledVector(dir, cam.dist); want.y = 3.3 + me.y * 0.35;
+    // Park-style broadcast framing: high and wide behind the play, keeps you, your man, the ball and the hoop in view.
+    // Never follows jump height (no tilting up at the crowd); every value is damped per second.
+    const o = players[1 - me.team], bp = ball.holder ? ball.holder.pos : ball.p;
+    const c = new THREE.Vector3(me.pos.x * 0.45 + o.pos.x * 0.3 + bp.x * 0.25, 0, me.pos.z * 0.45 + o.pos.z * 0.3 + bp.z * 0.25);
+    c.lerp(flat(RIM), CAM.TOWARD_RIM);
+    const spread = Math.max(flat(me.pos).distanceTo(c), flat(o.pos).distanceTo(c), flat(bp).distanceTo(c), flat(RIM).distanceTo(c) * 0.55);
+    const out = c.clone().sub(flat(RIM)), wantYaw = out.length() > 1 ? Math.max(-CAM.MAX_YAW, Math.min(CAM.MAX_YAW, Math.atan2(out.x, out.z))) : cam.yaw;
+    cam.yaw += Math.atan2(Math.sin(wantYaw - cam.yaw), Math.cos(wantYaw - cam.yaw)) * (1 - Math.exp(-dt * CAM.YAW_RATE));
+    const portrait = Math.pow(Math.max(0.5, Math.min(1, camera.aspect)), -0.55); // narrow phone screens need more distance
+    const wantDist = Math.min(CAM.MAX_DIST, Math.max(CAM.MIN_DIST, CAM.MIN_DIST + spread * CAM.SPREAD)) * portrait;
+    cam.dist += (wantDist - cam.dist) * (1 - Math.exp(-dt * CAM.ZOOM_RATE));
+    const k = 1 - Math.exp(-dt * CAM.FOLLOW_RATE), dir = new THREE.Vector3(Math.sin(cam.yaw), 0, Math.cos(cam.yaw));
+    const want = c.clone().addScaledVector(dir, cam.dist); want.y = CAM.HEIGHT_BASE + cam.dist * CAM.HEIGHT_PER_M;
     camera.position.lerp(want, k);
-    cam.look.lerp(new THREE.Vector3(mid.x * 0.6 + RIM.x * 0.4, 1.55 + me.y * 0.3, mid.z * 0.6 + RIM.z * 0.4), k);
+    cam.look.lerp(new THREE.Vector3(c.x, CAM.LOOK_Y, c.z), k);
     if (cam.shake > 0) { cam.shake -= dt; const a = cam.shake * 0.25; camera.position.x += (Math.random() - .5) * a; camera.position.y += (Math.random() - .5) * a; }
     camera.lookAt(cam.look);
   }
