@@ -241,11 +241,11 @@ export function start(root, opts) {
     const e = t - D.t0, G = DUNK.GATHER, Rz = DUNK.RISE, H = DUNK.HANG;
     pl.vy = 0;
     if (e < G) { // gather: plant, momentum bleeds off, small step toward the rim
-      const k = e / G; pl.pos.copy(D.p0).lerp(D.p1, 0.08 * smooth01(k)); pl.y = 0; pl.vel.multiplyScalar(0.8); D.phase = "gather";
+      const k = e / G; pl.pos.copy(D.p0).lerp(D.p1, 0.08 * smooth01(k)); pl.y = 0; pl.vel.multiplyScalar(0.8); D.phase = "gather"; D.u = k;
     } else if (e < G + Rz) { // rise: glide in (ease out) while the height follows a jump (fast up, slows at the top)
       const s = (e - G) / Rz;
       pl.pos.copy(D.p0).lerp(D.p1, 0.08 + 0.92 * (1 - (1 - s) * (1 - s)));
-      pl.y = DUNK.PEAK * (1 - (1 - s) * (1 - s)); D.phase = "rise";
+      pl.y = DUNK.PEAK * (1 - (1 - s) * (1 - s)); D.phase = "rise"; D.u = s;
       if (rel && s < DUNK.LAYUP_BEFORE && pl.hasBall) { // let go early: finish with a layup instead
         pl.dunkSeq = null; pl.dunking = false; pl.vy = Math.max(0, 2 * DUNK.PEAK * (1 - s) / Rz); pl.meter = GREEN_C - 0.05; release(pl); return;
       }

@@ -320,10 +320,9 @@ export function updateRig(p, t, dt, other) {
   m.upW = lerp(m.upW || 0, up ? 1 : 0, ease(up ? 16 : 8));
   m.defW = lerp(m.defW || 0, def && !up ? 1 : 0, ease(6));
   if (m.upW > 0.01) aimArms(m, p.group, side =>
-      hang && !(p.slam && t - p.slam < 0.15) ? rimReach(m, p, side, true) // hand IK: hands on the rim
-      : p.dunking && p.dunkSeq?.phase === "rise" && (t - p.dunkSeq.t0) > 0.38 ? rimReach(m, p, side, false) // late rise: reach for the rim
-      : p.dunking ? dunkArm(p, side)
-      : slam ? tv.set(side * 0.1, 0.6, 0.8) // throw it down
+      hang && !(p.slam && t - p.slam < 0.18) ? rimReach(m, p, side, true) // hands on the rim, elbows soft
+      : p.dunking ? dunkArm(m, p, side)
+      : slam ? slamArm(side) // whip down through the rim, wrist snaps
       : follow && !p.hasBall ? followThrough(side, Math.min(1, followT / 0.25))
       : p.shooting && p.hasBall ? shotForm(side, m.rise)
       : (side < 0 ? tv.set(-0.05, 1, 0.35) : tv.set(0.55, -0.1, -0.55)), m.upW); // contest: one arm straight up at the ball, the other back for balance
@@ -501,28 +500,38 @@ function followThrough(side, k) {
 // hand IK toward the rim: straight arm from the shoulder at the rim point (player space).
 // Ball hand goes to the front of the rim; on the hang both hands grip it.
 const _sh = new THREE.Vector3(), _rim = new THREE.Vector3(), _iq = new THREE.Quaternion();
-function rimReach(m, p, side, both) {
-  if (!p.rimPoint) return tv.set(side * 0.12, 1, 0.12);
-  const ballHand = side < 0; // visual right
-  if (!both && !ballHand) return tv.set(side * 0.45, 0.75, 0.35); // off arm balances
+// direction from this arm's shoulder to the rim point, in player space
+function rimDir(m, p, side, spread = 0) {
+  if (!p.rimPoint) return V(side * 0.12, 1, 0.12);
   (side > 0 ? m.b.armL : m.b.armR).getWorldPosition(_sh);
-  _rim.copy(p.rimPoint); if (both) _rim.x += side * 0.12; // grip a little apart
-  _rim.sub(_sh); p.group.getWorldQuaternion(_iq).invert(); _rim.applyQuaternion(_iq);
-  return tv.copy(_rim).normalize();
+  _rim.copy(p.rimPoint).sub(_sh); p.group.getWorldQuaternion(_iq).invert(); _rim.applyQuaternion(_iq);
+  _rim.x += side * spread; return _rim.clone().normalize();
+}
+// hanging / reaching: aim at the rim with the elbow flared out and soft (never a locked straight arm)
+function rimReach(m, p, side, both) {
+  const d = rimDir(m, p, side, both ? 0.12 : 0);
+  return [d.clone().add(V(side * 0.32, -0.05, -0.12)).normalize(), d.clone().add(V(-side * 0.05, 0.18, 0.1)).normalize()];
 }
 // arm direction on the way up for each dunk style (side: +1 / -1 per arm)
-function dunkArm(p, side) {
-  const k = Math.min(1, p.y / 1.3);
-  switch (p.dunkStyle) {
-    case 1: return tv.set(side * 0.25, 0.4 + k * 0.6, 0.9 - k * 0.5); // two hands, rising straight at the rim
-    case 2: return tv.set(side * 0.15, 1, -0.2); // 360: ball held overhead while spinning
-    case 3: { // windmill: the ball arm swings a full circle, the other arm reaches up
-      if (side < 0) { const a = -Math.PI / 2 + k * Math.PI * 2; return tv.set(-0.15, Math.sin(a), Math.cos(a)); }
-      return tv.set(0.4, 0.8, 0.4);
-    }
-    default: return tv.set(side * 0.18, 1, -0.55 + k * 0.25); // tomahawk: cocked back behind the head
-  }
+// dunk arms by phase, as [upper arm, forearm] so the elbow bends: gather at the chest -> cock back -> extend to the rim
+function dunkArm(m, p, side) {
+  const D = p.dunkSeq || {}, ph = D.phase, u = D.u ?? 1, ballSide = side < 0, sm = x => x * x * (3 - 2 * Math.max(0, Math.min(1, x)));
+  const gather = [V(side * 0.35, -0.7, 0.6), V(-side * 0.45, 0.25, 0.85)]; // both hands on the ball in front of the chest
+  if (ph === "approach" || ph === "gather") return gather;
+  const style = p.dunkStyle || 0, two = style === 1 || style === 2;
+  // cocked pose for this arm
+  let cock;
+  if (style === 2) cock = [V(side * 0.45, 0.75, 0.2), V(-side * 0.4, 0.85, 0.1)];          // 360: ball overhead, elbows bent
+  else if (style === 3 && ballSide) { const a = -Math.PI / 2 + u * Math.PI * 1.7; cock = [V(-0.2, Math.sin(a), Math.cos(a)), V(-0.1, Math.sin(a + 0.35), Math.cos(a + 0.35))]; } // windmill, slight bend
+  else if (two || ballSide) cock = [V(side * (two ? 0.22 : 0.3), 0.85, -0.1), V(side * 0.05, 0.2, -0.98)]; // cocked behind the head
+  else cock = [V(side * 0.5, 0.55, 0.6), V(side * 0.15, 0.9, 0.4)];                            // off arm: up and out for balance
+  const a1 = sm(u / 0.35);                                  // gather -> cock over the first third of the rise
+  const reach = (two || ballSide) && style !== 2 ? sm((u - 0.7) / 0.3) : 0; // extend at the top
+  const r = reach > 0 ? rimReach(m, p, side, false) : cock;
+  return [gather[0].clone().lerp(cock[0], a1).lerp(r[0], reach).normalize(), gather[1].clone().lerp(cock[1], a1).lerp(r[1], reach).normalize()];
 }
+// slam: ball arm whips forward-down through the rim (wrist snaps), off arm stays up
+function slamArm(side) { return side < 0 ? [V(side * 0.15, 0.35, 0.9), V(0, -0.55, 0.8)] : [V(side * 0.5, 0.5, 0.4), V(side * 0.15, 0.85, 0.3)]; }
 const Y = new THREE.Vector3(0, 1, 0), Z = new THREE.Vector3(0, 0, 1), tv = new THREE.Vector3();
 
 // point upper arm + forearm along a direction in player space (side: -1 left, +1 right), blended by w
