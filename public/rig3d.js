@@ -285,7 +285,9 @@ export function updateRig(p, t, dt, other) {
     dip = 0.2 * Math.sin(Math.PI * Math.min(1, mk * 1.2)); leanF += 0.18 * arc;
   } else if (mv?.kind === "hesi") { // stand up tall (sell the shot), then drop and go
     dip = mk < 0.42 ? -0.06 * Math.sin(Math.PI * mk / 0.42) : 0.12 * Math.sin(Math.PI * (mk - 0.42) / 0.58); leanF = mk < 0.42 ? -0.05 : 0.3;
-  } else if (mv?.kind === "snatch") { leanF = -0.18 * arc; dip = mk > 0.6 ? 0.18 * Math.sin(Math.PI * (mk - 0.6) / 0.4) : 0; // lean back in the air, sit wide on the landing
+  } else if (mv?.kind === "snatch") { // lunge: bent over the planted leg; snatch: spring back upright; land: sit wide
+    const L = 0.42; if (mk < L) { const a = Math.sin(Math.PI * 0.5 * Math.min(1, mk / L * 1.3)); dip = 0.22 * a; leanF = 0.45 * a; }
+    else { const b = (mk - L) / (1 - L); leanF = 0.45 * (1 - Math.min(1, b * 2.2)) - 0.12 * Math.sin(Math.PI * b); dip = b > 0.6 ? 0.18 * Math.sin(Math.PI * (b - 0.6) / 0.4) : 0.05; }
   } else if (mv?.kind === "cross") { // escape: deep plant, hips and shoulders sway from the ball side to the new side
     const sFrom = mv.from === 1 ? -1 : 1, sw = mk * mk * (3 - 2 * mk);
     dip = 0.2 * Math.sin(Math.PI * Math.min(1, mk * 1.15)); leanF += 0.16 * arc; twist = sFrom * 0.35 * (1 - 2 * sw); leanS = sFrom * 0.28 * (1 - 2 * sw);
@@ -369,10 +371,10 @@ export function updateRig(p, t, dt, other) {
       aimArms(m, p.group, side => side === sBall
         ? (hold > go ? [V(side * 0.3, -0.62, 0.5), V(-side * 0.25, 0.15, 0.95)] : [V(side * 0.22, -0.6, 0.75), V(side * 0.12, -0.85, 0.5)])
         : [V(side * 0.7, -0.35, 0.45), V(side * 0.2, 0.1, 0.95)], Math.max(hold, go));
-    } else if (mv.kind === "snatch") { // snatch back: reach the ball out front, then yank it back to the hip; off arm rips forward
-      const reachK = win(0, 0.25) * (1 - win(0.3, 0.5)), yank = win(0.3, 0.5) * (1 - win(0.85, 1));
+    } else if (mv.kind === "snatch") { // reach the ball WAY out low in front during the lunge, then yank it back to the hip; off arm balances
+      const reachK = win(0, 0.25) * (1 - win(0.38, 0.5)), yank = win(0.42, 0.55) * (1 - win(0.9, 1));
       aimArms(m, p.group, side => side === sBall
-        ? (reachK > yank ? [V(side * 0.25, -0.45, 0.88), V(side * 0.15, -0.6, 0.8)] : [V(side * 0.42, -0.9, -0.25), V(side * 0.1, -0.45, 0.9)])
+        ? (reachK > yank ? [V(side * 0.35, -0.55, 0.75), V(side * 0.2, -0.8, 0.55)] : [V(side * 0.42, -0.9, -0.25), V(side * 0.1, -0.45, 0.9)])
         : [V(side * 0.35, -0.2, 0.9), V(side * 0.1, 0.25, 0.95)], Math.max(reachK, yank));
     } else if (mv.kind === "spin") { // spin: ball tucked tight on the hip, off arm flung out wide for momentum
       aimArms(m, p.group, side => side === sBall ? [V(side * 0.35, -0.95, -0.05), V(-side * 0.15, -0.3, 0.94)] : [V(side * 0.95, 0.15, 0.1), V(side * 0.8, 0.35, 0.35)], bell);
