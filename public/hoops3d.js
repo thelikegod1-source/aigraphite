@@ -58,6 +58,7 @@ export function start(root, opts) {
   // online: host runs the game, guest sends inputs and draws the host's state
   const ONLINE = opts.online || null, NET = ONLINE?.net, GUEST = ONLINE?.role === "guest", ME = GUEST ? 1 : 0;
   const names = opts.names || [opts.p1 || "You", "AI"];
+  const FREE = !!opts.freestyle; // freestyle: no shot clock, no game end, always your ball, defender just guards (no steals/blocks)
   root.innerHTML = `<div class="h3">
     <div class="hp-top"><div class="hp-sc blue"><span>${esc(names[0])}</span><b id="hs0">0</b></div>
       <div class="hp-mid">First to ${TO_WIN}<small>2 beyond the arc · 1 inside</small></div>
@@ -236,9 +237,9 @@ export function start(root, opts) {
   }
   function scored(team, val, dunked) {
     score[team] += val; NET?.send({ sc: [team, val, dunked ? 1 : 0, score[0], score[1]] }); showScore(team, val, dunked); pause = 1.3;
-    if (score[team] >= TO_WIN) return finish(team);
+    if (score[team] >= TO_WIN && !FREE) return finish(team);
     // next possession only once nobody is mid-air (a dunker finishes hang + landing first)
-    const next = () => { if (over) return; if (players.some(p => p.dunkSeq || p.y > 0.01)) return setTimeout(next, 150); setupPossession(1 - team); };
+    const next = () => { if (over) return; if (players.some(p => p.dunkSeq || p.y > 0.01)) return setTimeout(next, 150); setupPossession(FREE ? 0 : 1 - team); };
     setTimeout(next, dunked ? 1500 : 1100);
   }
   function showScore(team, val, dunked) {
@@ -247,7 +248,7 @@ export function start(root, opts) {
     (team === ME ? SFX.roundWin : SFX.roundLoss)(); buzz(30);
     arena.setScore(score[0], score[1], names[0], names[1], dunked ? "DUNK!" : val === 2 ? "FROM DEEP" : ""); arena.cheer();
   }
-  function turnover(to, why) { msg(toText(to, why), 900); NET?.send({ to: [to, why] }); pause = 0.9; setTimeout(() => !over && setupPossession(to), 800); }
+  function turnover(to, why) { msg(toText(to, why), 900); NET?.send({ to: [to, why] }); pause = 0.9; setTimeout(() => !over && setupPossession(FREE ? 0 : to), 800); }
   function doMove(pl, kind) {
     if (!pl.hasBall || pl.shooting || pl.y > 0 || (pl.move && pl.move.kind !== "swap") || (pl.moveCool || 0) > t) return;
     if (pl.move?.kind === "swap") pl.move = null;
@@ -394,13 +395,14 @@ export function start(root, opts) {
           ball.p.lerpVectors(tmp, tmp2, e);
           ball.p.y = e < 0.5 ? y0 + (BALL_R - y0) * (e / 0.5) ** 2 : BALL_R + (y1 - BALL_R) * (1 - (1 - (e - 0.5) / 0.5) ** 2);
           const f = fwdOf(pl);
-          if (kind === "behind") ball.p.addScaledVector(f, -0.45 * Math.sin(Math.PI * e)); else if (kind === "legs") ball.p.addScaledVector(f, -0.02); else ball.p.addScaledVector(f, 0.12 * Math.sin(Math.PI * e));
+          if (kind === "behind") ball.p.addScaledVector(f, -0.45 * Math.sin(Math.PI * e)); else if (kind === "legs") { ball.p.addScaledVector(f, -0.08 * Math.sin(Math.PI * e)); ball.p.y = Math.min(ball.p.y, 0.55); } // under the hips, between the feet else ball.p.addScaledVector(f, 0.12 * Math.sin(Math.PI * e));
           if (e >= 0.5 && !pl.moveBounce) { pl.moveBounce = true; if (pl.team === ME) tone(95, .04, "sine", .05); } else if (e < 0.5) pl.moveBounce = false;
         }
         ball.spin += dt * 6;
         return;
       }
       (pl.palms || pl.hands)[pl.hand].getWorldPosition(tmp);
+      if (pl.move?.kind === "hesi" && (t - pl.move.t0) / pl.move.dur < HESI.STOP) { ball.p.set(tmp.x, tmp.y - BALL_R, tmp.z); return; } // hesi: ball held up at the hip (the freeze)
       if (pl.dribU != null) {
         // rides down in the palm (contact), leaves at the bottom of the push, hits the floor, rises back into the palm at the top
         const u = pl.dribU, H = DRIB.HOLD, F = DRIB.FLOOR;
@@ -468,6 +470,11 @@ export function start(root, opts) {
     let mx = 0, mz = 0, shoot = false;
     const toV = p => { const camFwd = flat(RIM.clone().sub(camera.position)).normalize(), right = new THREE.Vector3(-camFwd.z, 0, camFwd.x), d = flat(p.clone().sub(me.pos)); const l = d.length(); if (l < 0.25) return [0, 0]; d.divideScalar(Math.max(1, l)); return [d.dot(right), -d.dot(camFwd)]; };
     if (me.stumble > t) return [0, 0, false];
+    if (FREE && !me.hasBall) { // freestyle defender: stays in front and slides with you, never reaches or jumps
+      if (!ball.holder) return [0, 0, false];
+      const toHoop = new THREE.Vector3(RIM.x - you.pos.x, 0, RIM.z - you.pos.z).normalize(), [mx2, mz2] = toV(you.pos.clone().addScaledVector(toHoop, 1.3));
+      return [mx2 * 0.7, mz2 * 0.7, false];
+    }
     if (me.hasBall) {
       if (t > ai.thinkAt) { ai.thinkAt = t + 0.8 + Math.random(); const ang = (Math.random() - .5) * 2.4, r = Math.random() < .35 ? 7.2 : 1.2 + Math.random() * 4; ai.target.set(Math.sin(ang) * r, 0, Math.cos(ang) * r + 0.4); if (!ai.shootAt) ai.shootAt = t + 1.4 + Math.random() * 2.5; }
       [mx, mz] = toV(ai.target);
@@ -518,10 +525,10 @@ export function start(root, opts) {
       for (const p of players) { animatePlayer(p, t, dt, players[1 - p.team]); const o = players[1 - p.team]; p.ballLocal = p.group.worldToLocal((p.ballL ||= new THREE.Vector3()).copy(ball.p)); p.lookT = p.shooting || p.dunking ? RIM : (p.lookV ||= new THREE.Vector3()).set(o.pos.x, 1.55, o.pos.z); /* watch the man's chest, not the bouncing ball */ rig?.updateRig(p, t, dt, players[1 - p.team]); }
       if (!GUEST || ball.holder) stepBall(dt); else guestBall();
       if (NET && !GUEST) sendState(dt);
-      if (GUEST && ball.holder) root.querySelector("#hposs").textContent = `${offense === ME ? "Your ball" : "Defense"} · ${Math.max(0, Math.ceil(possClock))}`;
+      if (GUEST && ball.holder) root.querySelector("#hposs").textContent = `${offense === ME ? "Your ball" : "Defense"} · ${FREE ? "∞" : Math.max(0, Math.ceil(possClock))}`;
       if (!GUEST && pause <= 0 && ball.holder) {
-        possClock -= dt;
-        root.querySelector("#hposs").textContent = `${offense === ME ? "Your ball" : "Defense"} · ${Math.max(0, Math.ceil(possClock))}`;
+        if (!FREE) possClock -= dt;
+        root.querySelector("#hposs").textContent = `${offense === ME ? "Your ball" : "Defense"} · ${FREE ? "∞" : Math.max(0, Math.ceil(possClock))}`;
         if (possClock <= 0) { turnover(1 - offense, "SHOT CLOCK!"); tone(180, .4, "sawtooth", .15); }
       }
     }
@@ -668,7 +675,8 @@ export function start(root, opts) {
 
   if (opts.debug) window.__h3 = { players, ball, get score() { return score; }, input, doMove: k => doMove(players[0], k), givePoss: tm => setupPossession(tm), get rig() { return rig; }, get g() { return [gMeter, gWas, gSeq]; } };
   camera.position.set(0, 4, 14);
-  msg(GUEST ? "Their ball · lock in on D" : ONLINE ? "Your ball · get buckets" : "Your ball · get buckets", 1600);
+  msg(GUEST ? "Their ball · lock in on D" : FREE ? "Freestyle · no clock · cook" : "Your ball · get buckets", 1600);
+  if (FREE) { root.querySelector(".hp-mid").innerHTML = "FREESTYLE<small>no shot clock · practice your bag</small>"; }
   raf = requestAnimationFrame(frame);
   return cleanup;
 }

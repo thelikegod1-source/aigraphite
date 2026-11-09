@@ -350,15 +350,35 @@ export function updateRig(p, t, dt, other) {
       : [mixV(V(side * 0.4, -0.8, 0.3), V(side * 0.9, -0.45, 0.15), catchK), mixV(V(side * 0.2, -0.3, 0.9), V(side * 0.55, -0.55, 0.45), catchK)],
       Math.min(1, arc * 2.2) * (1 - out));
   }
-  if (mv?.kind === "cross" || mv?.kind === "swap" || mv?.kind === "legs") {
-    const sFrom = mv.from === 1 ? -1 : 1, k = mk, sm = x => x * x * (3 - 2 * x);
-    const push = sm(Math.min(1, k / 0.28)) * (1 - sm(Math.max(0, Math.min(1, (k - 0.28) / 0.25))));
-    const catchK = sm(Math.max(0, Math.min(1, (k - 0.45) / 0.25))) * (1 - sm(Math.max(0, (k - 0.85) / 0.15)));
-    const big = mv.kind === "cross" ? 1.45 : 0.6;
-    aimArms(m, p.group, side => side === sFrom
-      ? (push > 0.01 ? [V(side * 0.6 * big, -0.75, 0.3), V(side * 0.35 * big, -0.7, 0.6)] : null)
-      : (catchK > 0.01 ? [V(side * 0.55 * big, -0.75, 0.35), V(-side * 0.1, -0.6, 0.8)] : null),
-      Math.max(push, catchK) * 0.9);
+  // ---- per-move arm choreography (each move has its own shape; side +1 = visual left) ----
+  if (mv) {
+    const k = mk, sm = x => x * x * (3 - 2 * x), win = (a0, a1) => sm(Math.max(0, Math.min(1, (k - a0) / (a1 - a0))));
+    const bell = Math.sin(Math.PI * k), sFrom = mv.from === 1 ? -1 : 1, sBall = hand === 1 ? -1 : 1;
+    const push = win(0, 0.28) * (1 - win(0.28, 0.53)), catchK = win(0.45, 0.7) * (1 - win(0.85, 1));
+    if (mv.kind === "cross" || mv.kind === "swap") { // cross: long low sweep in front, arms wide; swap: same, smaller
+      const big = mv.kind === "cross" ? 1.45 : 0.6;
+      aimArms(m, p.group, side => side === sFrom
+        ? (push > 0.01 ? [V(side * 0.6 * big, -0.75, 0.3), V(side * 0.35 * big, -0.7, 0.6)] : null)
+        : (catchK > 0.01 ? [V(side * 0.55 * big, -0.75, 0.35), V(-side * 0.1, -0.6, 0.8)] : null), Math.max(push, catchK) * 0.9);
+    } else if (mv.kind === "legs") { // between the legs: ball hand dives down between the knees, other hand waits behind the far knee
+      aimArms(m, p.group, side => side === sFrom
+        ? [V(side * 0.12, -0.96, 0.18), V(-side * 0.3, -0.85, -0.25)]
+        : [V(side * 0.32, -0.92, -0.05), V(-side * 0.12, -0.92, -0.3)], bell);
+    } else if (mv.kind === "hesi") { // hesi: ball pulled up to the hip like a pull-up gather (sell it), off arm out; then push the ball out ahead
+      const hold = win(0, 0.15) * (1 - win(0.38, 0.5)), go = win(0.45, 0.6) * (1 - win(0.85, 1));
+      aimArms(m, p.group, side => side === sBall
+        ? (hold > go ? [V(side * 0.3, -0.62, 0.5), V(-side * 0.25, 0.15, 0.95)] : [V(side * 0.22, -0.6, 0.75), V(side * 0.12, -0.85, 0.5)])
+        : [V(side * 0.7, -0.35, 0.45), V(side * 0.2, 0.1, 0.95)], Math.max(hold, go));
+    } else if (mv.kind === "snatch") { // snatch back: reach the ball out front, then yank it back to the hip; off arm rips forward
+      const reachK = win(0, 0.25) * (1 - win(0.3, 0.5)), yank = win(0.3, 0.5) * (1 - win(0.85, 1));
+      aimArms(m, p.group, side => side === sBall
+        ? (reachK > yank ? [V(side * 0.25, -0.45, 0.88), V(side * 0.15, -0.6, 0.8)] : [V(side * 0.42, -0.9, -0.25), V(side * 0.1, -0.45, 0.9)])
+        : [V(side * 0.35, -0.2, 0.9), V(side * 0.1, 0.25, 0.95)], Math.max(reachK, yank));
+    } else if (mv.kind === "spin") { // spin: ball tucked tight on the hip, off arm flung out wide for momentum
+      aimArms(m, p.group, side => side === sBall ? [V(side * 0.35, -0.95, -0.05), V(-side * 0.15, -0.3, 0.94)] : [V(side * 0.95, 0.15, 0.1), V(side * 0.8, 0.35, 0.35)], bell);
+    } else if (mv.kind === "stepback" || mv.kind === "hop") { // step back: ball ripped back to the hip, off arm extended to create space
+      aimArms(m, p.group, side => side === sBall ? [V(side * 0.4, -0.9, -0.2), V(side * 0.12, -0.5, 0.85)] : [V(side * 0.3, -0.35, 0.88), V(side * 0.15, 0.0, 1)], bell);
+    }
   }
   // reach for a steal: one arm jabs low at the ball
   const reach = p.reachT && t - p.reachT < 0.35 ? Math.sin(Math.PI * (t - p.reachT) / 0.35) : 0;

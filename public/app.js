@@ -72,7 +72,8 @@ function home(msg) {
         .map(([k, ic, n, sub]) => `<button class="segcard" data-mode="${k}" aria-pressed="${mode === k}"><span class="ic">${ic}</span><b>${n}</b><span class="sub">${sub}</span></button>`).join("")}
     </div>
     ${mode === "hoops" ? `<div class="btns"><button id="hon">Play online · 1v1</button><button id="hfr" class="ghost">Play a friend</button></div>
-    <div class="btns"><button id="hai" class="ghost">Play vs AI · 3D</button><button id="h2p" class="ghost">2 players · classic</button></div>` : `
+    <div class="btns"><button id="hai" class="ghost">Play vs AI · 3D</button><button id="hfs" class="ghost">Freestyle · practice</button></div>
+    <div class="btns"><button id="h2p" class="ghost">2 players · classic</button></div>` : `
     <div class="btns"><button id="find">Find match</button><button id="friend" class="ghost">Play a friend</button></div>
     <div class="btns"><button id="bot" class="ghost">Practice vs AI</button></div>`}
     ${msg ? `<p class="err">${esc(msg)}</p>` : ""}
@@ -82,7 +83,7 @@ function home(msg) {
   wireNav();
   document.querySelectorAll("[data-mode]").forEach(b => b.onclick = () => { mode = b.dataset.mode; store.set("db_mode", mode); home(); });
   if (mode === "hoops") {
-    $("#hai").onclick = () => hoops(true); $("#h2p").onclick = () => hoops(false);
+    $("#hai").onclick = () => hoops(true); $("#h2p").onclick = () => hoops(false); $("#hfs").onclick = () => hoops(true, true);
     $("#hon").onclick = () => hoopsOnline("quick"); $("#hfr").onclick = () => hoopsFriend();
   } else $("#find").onclick = find;
   const tickOnline = async () => {
@@ -98,10 +99,10 @@ function home(msg) {
 }
 
 let hoopsStop = null;
-async function hoops(vsAI) {
+async function hoops(vsAI, freestyle = false) {
   stop(); view = "hoops";
   app.innerHTML = `<div class="panel hoops-panel"><p class="status pulse">Loading the court…</p></div>`;
-  const root = app.querySelector(".hoops-panel"), opts = { vsAI, debug: /debug3d/.test(location.search), p1: vsAI ? me.name : "Player 1", onExit: () => { hoopsStop = null; home(); } };
+  const root = app.querySelector(".hoops-panel"), opts = { vsAI, freestyle, debug: /debug3d/.test(location.search), p1: vsAI ? me.name : "Player 1", onExit: () => { hoopsStop = null; home(); } };
   if (!vsAI) { hoopsStop = window.Hoops.start(root, opts); return; }
   try {
     const mod = await import("./hoops3d.js");
