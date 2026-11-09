@@ -205,6 +205,6 @@ export function addAtmosphere(wrap) {
   const v = document.createElement("div");
   const grain = (() => { const c = document.createElement("canvas"); c.width = c.height = 128; const x = c.getContext("2d"), d = x.createImageData(128, 128);
     for (let i = 0; i < d.data.length; i += 4) { const g = Math.random() * 255; d.data[i] = d.data[i + 1] = d.data[i + 2] = g; d.data[i + 3] = 18; } x.putImageData(d, 0, 0); return c.toDataURL(); })();
-  v.style.cssText = `position:absolute;inset:0;pointer-events:none;z-index:1;background:radial-gradient(120% 90% at 50% 45%, transparent 55%, rgba(0,0,0,.55) 100%), url(${grain});mix-blend-mode:normal`;
+  v.style.cssText = `position:absolute;inset:0;pointer-events:none;z-index:1;background:radial-gradient(120% 90% at 50% 45%, transparent 60%, rgba(0,0,0,.45) 100%)`; // vignette only (grain removed)
   wrap.appendChild(v); return v;
 }

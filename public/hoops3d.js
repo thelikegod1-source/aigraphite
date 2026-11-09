@@ -482,7 +482,7 @@ export function start(root, opts) {
         }
       } else { input.move = null; input.steal = false; if (!GUEST) for (const pl of players) stepPlayer(pl, dt, 0, 0, false, false); } // still fall / hang during the pause
       input.wasShoot = input.shoot;
-      for (const p of players) { animatePlayer(p, t, dt, players[1 - p.team]); const o = players[1 - p.team]; p.lookT = p.shooting || p.dunking ? RIM : (p.lookV ||= new THREE.Vector3()).set(o.pos.x, 1.35, o.pos.z); /* watch the man's chest, not the bouncing ball */ rig?.updateRig(p, t, dt, players[1 - p.team]); }
+      for (const p of players) { animatePlayer(p, t, dt, players[1 - p.team]); const o = players[1 - p.team]; p.ballLocal = p.group.worldToLocal((p.ballL ||= new THREE.Vector3()).copy(ball.p)); p.lookT = p.shooting || p.dunking ? RIM : (p.lookV ||= new THREE.Vector3()).set(o.pos.x, 1.55, o.pos.z); /* watch the man's chest, not the bouncing ball */ rig?.updateRig(p, t, dt, players[1 - p.team]); }
       if (!GUEST || ball.holder) stepBall(dt); else guestBall();
       if (NET && !GUEST) sendState(dt);
       if (GUEST && ball.holder) root.querySelector("#hposs").textContent = `${offense === ME ? "Your ball" : "Defense"} · ${Math.max(0, Math.ceil(possClock))}`;

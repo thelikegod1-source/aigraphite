@@ -87,7 +87,15 @@ export function attachRig(p, rig, colors) {
   p.hip.visible = false; p.group.add(root);
   p.mx = { root, mixer, actions, b, s, baseY, w: {}, mirror: false };
   { // rest ankle height, for keeping feet on the floor
-    p.group.updateMatrixWorld(true); const v = new THREE.Vector3(); if (b.footL) { b.footL.getWorldPosition(v); p.mx.ankle = v.y - p.group.position.y; }
+    // measure the real soles with the skeleton posed (bone matrices are stale before the first render),
+    // put them exactly on the court, and remember how high the ankle sits above the sole
+    p.group.updateMatrixWorld(true);
+    const v = new THREE.Vector3(); let sole = Infinity;
+    root.traverse(o => { if (!o.isSkinnedMesh) return; o.skeleton.update(); const a = o.geometry.attributes.position;
+      for (let i = 0; i < a.count; i += 3) { v.fromBufferAttribute(a, i); o.applyBoneTransform(i, v); v.applyMatrix4(o.matrixWorld); if (v.y < sole) sole = v.y; } });
+    const gy = p.group.position.y;
+    if (isFinite(sole)) { root.position.y -= sole - gy; p.mx.baseY = root.position.y; p.group.updateMatrixWorld(true); }
+    if (b.footL) { b.footL.getWorldPosition(v); p.mx.ankle = v.y - gy; }
   }
   if (actions.idleU) { actions.idleU.setEffectiveWeight(1); actions.idleL.setEffectiveWeight(1); p.mx.w.idleU = p.mx.w.idleL = 1; }
   return true;
@@ -244,7 +252,11 @@ export function updateRig(p, t, dt, other) {
   const def = !p.hasBall && other.hasBall, A = m.actions, W = {};
   const walkW = Math.min(1, speed / 0.35) * (1 - Math.max(0, (speed - 0.45) / 0.35)), runW = Math.max(0, Math.min(1, (speed - 0.45) / 0.35));
   const moving = Math.min(1, walkW + runW), base = "idle"; // defense = upright body + procedural stance/shuffle/arms (the old 'sneak' pose clip twisted and hunched him)
-  if (def) W.idleL = 1; // defense: legs come from the idle base, bent into a stance + shuffled procedurally (never a run cycle)
+  if (def) { // defense: side-to-side = procedural shuffle; toward/away from the man = real steps (closeout / backpedal)
+    _lv.set(p.vel.x, 0, p.vel.z).applyAxisAngle(Y, -p.group.rotation.y);
+    const fbK = Math.abs(_lv.z) / (Math.hypot(_lv.x, _lv.z) + 1e-3), stepW = moving * fbK;
+    W.idleL = 1 - stepW; W.walkL = walkW * fbK; W.runL = runW * fbK;
+  }
   else { W[base + "L"] = 1 - moving; W.walkL = walkW; W.runL = runW; }
   if (def) W.idleU = 1; else { W.idleU = 1 - moving; W.walkU = walkW; W.runU = runW; }
   for (const k in A) { const tw = W[k] || 0; m.w[k] = lerp(m.w[k] ?? 0, tw, ease(9)); }
@@ -358,7 +370,8 @@ export function updateRig(p, t, dt, other) {
   }
   // defensive shuffle: steps synced to ground distance (no skating), lead foot reaches, trail foot closes,
   // forward/back motion becomes short choppy steps; feet never cross
-  m.shufW = lerp(m.shufW || 0, def && !air ? Math.min(1, speed * 2.2) : 0, ease(10));
+  _lv.set(p.vel.x, 0, p.vel.z).applyAxisAngle(Y, -p.group.rotation.y);
+  m.shufW = lerp(m.shufW || 0, def && !air ? Math.min(1, speed * 2.2) * Math.abs(_lv.x) / (Math.hypot(_lv.x, _lv.z) + 1e-3) : 0, ease(10));
   if (m.shufW > 0.01) {
     _lv.set(p.vel.x, 0, p.vel.z).applyAxisAngle(Y, -p.group.rotation.y); // velocity in the player's own frame
     const lat = _lv.x, fb = _lv.z, sp = Math.hypot(lat, fb);
@@ -376,17 +389,29 @@ export function updateRig(p, t, dt, other) {
     p.group.updateMatrixWorld(true);
     m.b.footL.getWorldPosition(tmpA); m.b.footR.getWorldPosition(tmpB);
     const low = Math.min(tmpA.y, tmpB.y) - p.group.position.y;
-    m.ground = lerp(m.ground ?? 0, m.ankle - low, ease(20));
+    m.ground = lerp(m.ground ?? 0, m.ankle - low + 0.035, ease(20)); // +3.5 cm: toes dip when the foot rolls
     m.root.position.y = m.baseY + m.ground; p.group.updateMatrixWorld(true);
   } else m.ground = lerp(m.ground ?? 0, 0, ease(8));
   // defense: upper arms out, elbows bent, hands up and active
-  if (!({}).def && m.defW > 0.01 && !reach) aimArms(m, p.group, side => { const a = Math.sin(t * 1.6 + side * 1.7) * 0.07; return [V(side * 0.9, -0.25 + a * 0.4, 0.3), V(side * 0.25, 0.55 + a, 0.75)]; }, m.defW);
+  // active defense: one hand up to contest, the other low mirroring the ball; they trade every so often,
+  // the low hand tracks the ball, and both "dig" a little - alive, not frozen
+  if (m.defW > 0.01 && !reach) {
+    if (!m.dHandT || t > m.dHandT) { m.dHand = m.dHand === 1 ? -1 : 1; m.dHandT = t + 1.1 + Math.random() * 1.2; }
+    m.dSwap = lerp(m.dSwap ?? 0, m.dHand, ease(5)); // smooth trade (-1..1)
+    let bx = 0, by = -0.3; if (p.ballLocal) { bx = Math.max(-0.9, Math.min(0.9, p.ballLocal.x)); by = Math.max(-0.7, Math.min(0.2, p.ballLocal.y - 1.1)); }
+    aimArms(m, p.group, side => {
+      const hi = Math.max(0, side * m.dSwap), lo = 1 - hi, dig = Math.sin(t * 6.5 + side * 2.1) * 0.06;
+      const upArm = mixV(V(side * 0.55 + bx * 0.25, by * 0.6 - 0.35, 0.75), V(side * 0.35, 0.75, 0.35), hi);
+      const fore = mixV(V(bx * 0.35 + side * 0.1, by + dig, 1), V(side * 0.05, 1, 0.25 + dig), hi);
+      return [upArm, fore];
+    }, m.defW);
+  }
   // head tracks the ball (or the rim when shooting), within a natural range
   if (!({}).head && m.b.head && p.lookT) {
     p.group.updateMatrixWorld(true);
     const loc = p.group.worldToLocal(tmpA.copy(p.lookT)); m.b.head.getWorldPosition(tmpB); p.group.worldToLocal(tmpB);
     const dx = loc.x - tmpB.x, dy = loc.y - tmpB.y, dz = loc.z - tmpB.z;
-    const yaw = Math.max(-0.6, Math.min(0.6, Math.atan2(dx, dz))), pitch = Math.max(-0.35, Math.min(0.4, Math.atan2(dy, Math.hypot(dx, dz))));
+    const yaw = Math.max(-0.6, Math.min(0.6, Math.atan2(dx, dz))), pitch = Math.max(-0.15, Math.min(0.4, Math.atan2(dy, Math.hypot(dx, dz))));
     const ok = dz > -0.3 ? 1 : 0.3; // don't snap around to look straight behind
     m.hy = lerp(m.hy || 0, yaw * ok, ease(5)); m.hp = lerp(m.hp || 0, pitch * ok, ease(5));
     turn(m, m.b.head, Y, m.hy * 0.65); turn(m, m.b.head, X, -m.hp * 0.7);
