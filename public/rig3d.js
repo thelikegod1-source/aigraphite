@@ -285,7 +285,7 @@ export function updateRig(p, t, dt, other) {
     dip = 0.2 * Math.sin(Math.PI * Math.min(1, mk * 1.2)); leanF += 0.18 * arc;
   } else if (mv?.kind === "hesi") { // stand up tall (sell the shot), then drop and go
     dip = mk < 0.42 ? -0.06 * Math.sin(Math.PI * mk / 0.42) : 0.12 * Math.sin(Math.PI * (mk - 0.42) / 0.58); leanF = mk < 0.42 ? -0.05 : 0.3;
-  } else if (mv?.kind === "snatch") { leanF = -0.3 * arc; dip = 0.08 * arc;
+  } else if (mv?.kind === "snatch") { leanF = -0.18 * arc; dip = mk > 0.6 ? 0.18 * Math.sin(Math.PI * (mk - 0.6) / 0.4) : 0; // lean back in the air, sit wide on the landing
   } else if (mv?.kind === "cross") { // escape: deep plant, hips and shoulders sway from the ball side to the new side
     const sFrom = mv.from === 1 ? -1 : 1, sw = mk * mk * (3 - 2 * mk);
     dip = 0.2 * Math.sin(Math.PI * Math.min(1, mk * 1.15)); leanF += 0.16 * arc; twist = sFrom * 0.35 * (1 - 2 * sw); leanS = sFrom * 0.28 * (1 - 2 * sw);
@@ -392,11 +392,11 @@ export function updateRig(p, t, dt, other) {
     : undefined;
   if (m.airW > 0.01) aimLegs(m, p.group, m.airW, airLegs);
   // crouch with real knee bend (defense stance, gathers, landings, moves), wider base on D
-  const bend = Math.min(1, m.dip / 0.12), stanceW = (1 - m.airW) * (mv?.kind === "cross" || mv?.kind === "behind" || mv?.kind === "legs" ? 1 : 1 - Math.min(1, speed * 1.4) * 0.75); // escapes keep the wide sit while sliding
+  const bend = Math.min(1, m.dip / 0.12), stanceW = (1 - m.airW) * (mv?.kind === "cross" || mv?.kind === "behind" || mv?.kind === "legs" || mv?.kind === "snatch" ? 1 : 1 - Math.min(1, speed * 1.4) * 0.75); // escapes keep the wide sit while sliding
   m.defLeg = lerp(m.defLeg || 0, def ? 1 : 0, ease(6));
   if (!({}).legs && stanceW > 0.01 && (bend > 0.02 || m.defLeg > 0.02)) {
     const c = Math.max(bend, m.defLeg * 0.85);
-    aimLegs(m, p.group, stanceW, () => [0.15 + 0.6 * c, 0.1 + 0.55 * c, 0.12 + 0.28 * Math.max(m.defLeg, mv?.kind === "behind" ? arc : 0) + (mv?.kind === "cross" || mv?.kind === "legs" ? 0.36 * Math.min(1, arc * 1.6) : 0)]);
+    aimLegs(m, p.group, stanceW, () => [0.15 + 0.6 * c, 0.1 + 0.55 * c, 0.12 + 0.28 * Math.max(m.defLeg, mv?.kind === "behind" ? arc : 0) + (mv?.kind === "cross" || mv?.kind === "legs" || mv?.kind === "snatch" ? 0.36 * Math.min(1, arc * 1.6) : 0)]);
   }
   // defensive shuffle: steps synced to ground distance (no skating), lead foot reaches, trail foot closes,
   // forward/back motion becomes short choppy steps; feet never cross

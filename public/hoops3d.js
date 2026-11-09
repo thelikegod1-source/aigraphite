@@ -49,9 +49,12 @@ const MOVES = { swap: { key: "", label: "", dur: 0.4, burst: 0, hidden: true }, 
   spin: { key: "KeyF", label: "Spin", dur: 0.65, burst: 4.2 }, stepback: { key: "KeyC", label: "Step back", dur: 0.48, burst: 4.0 },
   legs: { key: "KeyV", label: "Btw legs", dur: 0.42, burst: 0 },      // between the legs: wide sit, ball under, short slide
   hesi: { key: "KeyG", label: "Hesi", dur: 0.78, burst: 0 },          // stop, rise, freeze the defender, explode
-  snatch: { key: "KeyR", label: "Snatch", dur: 0.44, burst: 4.8 },    // snatch-back: yank the ball and hop away
+  snatch: { key: "KeyR", label: "Snatch", dur: 0.5, burst: 3.6 },    // snatch-back: yank the ball and hop away
   sizeup: { key: "KeyT", label: "Size up", dur: 0.42, burst: 0 } };   // between the legs into a cross (combo)
 // ---- new dribble moves ----
+// chaining: a new move can cut the current one once it's this far along; earlier presses are buffered
+const CHAIN = { AT: 0.3, COOL: 0.06, BUFFER: 0.35 }; // fraction of a move, s between moves, s a press stays buffered
+const SNATCH = { HOP_V: 2.6, BACK: 0.75, SIDE: 0.65 }; // m/s up (~0.35 m off the floor), direction mix
 const LEGS = { GLIDE: 2.4 }, HESI = { STOP: 0.42, BURST: 6.2 }; // m/s slide, fraction spent stopped, m/s explode
 
 export function start(root, opts) {
@@ -250,18 +253,24 @@ export function start(root, opts) {
   }
   function turnover(to, why) { msg(toText(to, why), 900); NET?.send({ to: [to, why] }); pause = 0.9; setTimeout(() => !over && setupPossession(FREE ? 0 : to), 800); }
   function doMove(pl, kind) {
-    if (!pl.hasBall || pl.shooting || pl.y > 0 || (pl.move && pl.move.kind !== "swap") || (pl.moveCool || 0) > t) return;
-    if (pl.move?.kind === "swap") pl.move = null;
+    if (!pl.hasBall || pl.shooting || pl.dunking) return;
+    const prog = pl.move ? (t - pl.move.t0) / pl.move.dur : 1;
+    const busy = (pl.move && pl.move.kind !== "swap" && prog < CHAIN.AT) || (pl.moveCool || 0) > t || (pl.y > 0.02 && pl.move?.kind !== "snatch");
+    if (busy) { pl.buffer = { kind, t }; return; } // pressed early: fire it at the first chance
+    pl.buffer = null; pl.move = null; // cancel whatever was playing into the new move
     const M = MOVES[kind], fwd = fwdOf(pl), side = new THREE.Vector3(fwd.z, 0, -fwd.x);
     let dir;
     if (kind === "cross") { pl.hand = 1 - pl.hand; const tR = flat(RIM).sub(flat(pl.pos)).normalize(), sR = new THREE.Vector3(tR.z, 0, -tR.x); dir = sR.multiplyScalar(pl.hand ? -1 : 1).addScaledVector(tR, CROSS.FWD); }
     else if (kind === "behind") { pl.hand = 1 - pl.hand; const away = flat(pl.pos).sub(flat(RIM)).normalize(); dir = away.multiplyScalar(BTB.BACK).addScaledVector(side, (pl.hand ? -1 : 1) * BTB.SIDE); }
     else if (kind === "legs" || kind === "sizeup") { pl.hand = 1 - pl.hand; const tR = flat(RIM).sub(flat(pl.pos)).normalize(), sR = new THREE.Vector3(tR.z, 0, -tR.x); dir = sR.multiplyScalar(pl.hand ? -1 : 1); if (kind === "sizeup") pl.queue = "cross"; kind = "legs"; }
     else if (kind === "hesi") { dir = flat(RIM).sub(flat(pl.pos)).normalize(); }
-    else if (kind === "snatch") { dir = flat(pl.pos).sub(flat(RIM)).normalize(); pl.space = t + 1.6; }
+    else if (kind === "snatch") { // explosive hop back and to the ball side, ball yanked to the hip, land wide and low
+      const away = flat(pl.pos).sub(flat(RIM)).normalize(), sd = new THREE.Vector3(-away.z, 0, away.x).multiplyScalar(pl.hand ? 1 : -1);
+      dir = away.multiplyScalar(SNATCH.BACK).add(sd.multiplyScalar(SNATCH.SIDE)); pl.vy = SNATCH.HOP_V; pl.space = t + 1.6;
+    }
     else if (kind === "spin") { const s = Math.random() < .5 ? 1 : -1; pl.spinDir = s; dir = fwd.clone().addScaledVector(side, s * 0.8); }
     else { dir = fwd.clone().multiplyScalar(-1); pl.space = t + 1.4; }
-    pl.move = { kind, t0: t, dur: MOVES[kind].dur, dir: dir.normalize(), from: kind === "cross" || kind === "behind" || kind === "legs" ? 1 - pl.hand : pl.hand }; pl.moveCool = t + M.dur + 0.25;
+    pl.move = { kind, t0: t, dur: MOVES[kind].dur, dir: dir.normalize(), from: kind === "cross" || kind === "behind" || kind === "legs" ? 1 - pl.hand : pl.hand }; pl.moveCool = t + CHAIN.COOL;
     if (kind === "legs" || kind === "hesi") pl.space = t + 1.0; // pull-up window right out of the move
     tone(kind === "spin" ? 260 : 420, .05, "triangle", .07);
     // ankle breaker: defender close and caught leaning
@@ -291,6 +300,7 @@ export function start(root, opts) {
     let sp = (pl.hasBall ? SPEED * 0.9 : SPEED) * (ground ? 1 : 0.3) * (pl.burst > t ? 1.3 : 1);
     if (pl.stumble > t) sp *= 0.08;
     if (pl.shooting && ground) sp *= 0.2;
+    if (pl.buffer) { if (t - pl.buffer.t > CHAIN.BUFFER) pl.buffer = null; else if (!pl.move || (t - pl.move.t0) / pl.move.dur >= CHAIN.AT) { const b = pl.buffer; pl.buffer = null; doMove(pl, b.kind); } }
     let steer = !pl.move;
     if (pl.move) {
       const k = (t - pl.move.t0) / pl.move.dur, kind = pl.move.kind;
@@ -382,6 +392,7 @@ export function start(root, opts) {
   function stepBall(dt) {
     if (ball.holder) {
       const pl = ball.holder; pl.group.updateMatrixWorld(true);
+      if (pl.move?.kind === "snatch") { (pl.palms || pl.hands)[pl.hand].getWorldPosition(tmp); ball.p.set(tmp.x, tmp.y - BALL_R, tmp.z); return; } // snatch: ball rides in the yanking hand through the hop
       if (pl.shooting || pl.dunking || pl.y > 0.02) { ball.p.copy(pl.dunking ? ((pl.palms || pl.hands)[1].getWorldPosition(tmp), tmp.add(new THREE.Vector3(0, BALL_R * 0.6, 0))) : handsMid(pl)); return; }
       if (pl.move && (pl.move.kind === "cross" || pl.move.kind === "behind" || pl.move.kind === "swap" || pl.move.kind === "legs")) {
         // held in the palm → one low bounce across → caught in the other palm
