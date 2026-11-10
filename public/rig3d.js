@@ -8,6 +8,7 @@ import { clone as cloneSkinned } from "./vendor/SkeletonUtils.js";
 // Add new clips here: drop public/models/anim_<name>.glb and list the name.
 const CLIPS = ["dribble", "idle", "walk", "run", "defense"];
 const HEIGHT = 1.9;
+const POSED = m => (m.posed ||= [m.b.armL, m.b.armR, m.b.foreL, m.b.foreR, m.b.L, m.b.R, m.b.spine, m.b.neck, m.b.head, m.b.upL, m.b.upR, m.b.legL, m.b.legR].filter(Boolean)); // every bone we pose in code
 const SMOOTH_RATE = 16;
 const SHUFFLE = { STEP: 0.42, WIDTH: 0.38, REACH: 0.14, LIFT: 0.18 }; // m per step, stance width, lead-foot reach, knee lift
 const _lv = new THREE.Vector3(); // 1/s: how fast posed joints catch up (lower = smoother/laggier)
@@ -155,6 +156,26 @@ function shell(mesh, keep, offsetFn, mat) {
   mesh.parent.add(sm); sm.position.copy(mesh.position); sm.quaternion.copy(mesh.quaternion); sm.scale.copy(mesh.scale);
   return sm;
 }
+function clothShell(mesh, N, val, off, base, edge) {
+  const g = mesh.geometry, pos = g.attributes.position, nrm = g.attributes.normal, idx = g.index ? g.index.array : null;
+  const P = new Float32Array(N * 3), C = new Float32Array(N * 4), V = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    const v = V[i] = val(i), o = v > -0.08 ? off(i) : 0, k = Math.max(0, Math.min(1, 1 - v / 0.022)); // k: 1 at the edge -> trim stripe
+    P[i * 3] = pos.getX(i) + nrm.getX(i) * o; P[i * 3 + 1] = pos.getY(i) + nrm.getY(i) * o; P[i * 3 + 2] = pos.getZ(i) + nrm.getZ(i) * o;
+    C[i * 4] = base.r + (edge.r - base.r) * k; C[i * 4 + 1] = base.g + (edge.g - base.g) * k; C[i * 4 + 2] = base.b + (edge.b - base.b) * k;
+    C[i * 4 + 3] = Math.max(0, Math.min(1, 0.5 + v / 0.12)); // alpha 0.5 exactly on the garment's edge
+  }
+  const tri = [], T = idx ? idx.length : N;
+  for (let t = 0; t < T; t += 3) { const a = idx ? idx[t] : t, b = idx ? idx[t + 1] : t + 1, c = idx ? idx[t + 2] : t + 2; if (V[a] > -0.06 || V[b] > -0.06 || V[c] > -0.06) tri.push(a, b, c); }
+  const sg = new THREE.BufferGeometry();
+  sg.setAttribute("position", new THREE.BufferAttribute(P, 3)); sg.setAttribute("color", new THREE.BufferAttribute(C, 4));
+  sg.setAttribute("skinIndex", g.attributes.skinIndex); sg.setAttribute("skinWeight", g.attributes.skinWeight);
+  sg.setIndex(tri); sg.computeVertexNormals();
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.85, metalness: 0 });
+  const sm = new THREE.SkinnedMesh(sg, mat); sm.bind(mesh.skeleton, mesh.bindMatrix); sm.castShadow = true; sm.frustumCulled = false;
+  mesh.parent.add(sm); sm.position.copy(mesh.position); sm.quaternion.copy(mesh.quaternion); sm.scale.copy(mesh.scale);
+  return sm;
+}
 function addGear(mesh, info, c, root, team, textured = false) {
   const U = 1 / root.scale.x; // gear sizes below are in meters; the mesh may be modeled at another scale
   const { cats, dom, fr } = info, pos = mesh.geometry.attributes.position;
@@ -162,14 +183,22 @@ function addGear(mesh, info, c, root, team, textured = false) {
   const wp = n => bone(n).getWorldPosition(new THREE.Vector3());
   const toWorld = i => mesh.localToWorld(new THREE.Vector3(pos.getX(i), pos.getY(i), pos.getZ(i)));
   const cloth = (col, rough = 0.85) => new THREE.MeshStandardMaterial({ color: col, roughness: rough, metalness: 0, emissive: col, emissiveIntensity: 0.06 });
-  // jersey: loose tank top over the torso, hem hanging over the shorts
-  const jIn = i => cats[i] === "jersey";
-  shell(mesh, jIn, i => U * (/Hips/.test(dom[i]) ? 0.026 : /Spine$/.test(dom[i]) ? 0.022 : 0.014), cloth(c.jersey));
+  // Clothes are skinned copies of the body pushed out along the normals. Their edges are cut per pixel from a smooth
+  // "how far inside the garment" value (meters, measured in the T-pose), so hems and armholes are clean lines.
+  const N = pos.count, W = new Array(N); for (let i = 0; i < N; i++) W[i] = toWorld(i);
+  const hipsY = wp("Hips").y, neckY = wp("Neck").y, shX = Math.abs(wp("LeftArm").x), kneeY = wp("LeftLeg").y;
+  const rs = Math.sign(wp("RightArm").x) || -1, elbowX = Math.abs(wp("RightForeArm").x), wristX = Math.abs(wp("RightHand").x);
+  const sm01 = x => { x = Math.max(0, Math.min(1, x)); return x * x * (3 - 2 * x); };
+  const trim = new THREE.Color(c.trim), jers = new THREE.Color(c.jersey), shrt = new THREE.Color(c.shorts), slv = new THREE.Color(team ? 0x151515 : 0xf4f4f4);
+  const garment = (val, off, base, edge) => clothShell(mesh, N, i => val(W[i]), i => U * off(W[i]), base, edge);
+  // jersey: tank top with a scooped neck, hem hanging over the shorts
+  garment(w => Math.min(w.y - (hipsY - 0.11), (neckY - 0.035 + Math.abs(w.x) * 0.55) - w.y, (shX + 0.03) - Math.abs(w.x)),
+    w => 0.011 + 0.02 * sm01((hipsY + 0.18 - w.y) / 0.3), jers, trim);
   // shorts: baggy, flaring toward the knee
-  const sIn = i => cats[i] === "shorts";
-  shell(mesh, sIn, i => U * (/UpLeg/.test(dom[i]) ? 0.02 + 0.03 * (1 - fr[i]) : 0.022), cloth(c.shorts));
-  // arm sleeve on the shooting arm (visual right)
-  shell(mesh, i => /RightForeArm|RightArm$/.test(dom[i]) && cats[i] === "skin" && !(/RightArm$/.test(dom[i]) && fr[i] > 0.6), () => U * 0.006, cloth(team ? 0x111111 : 0xffffff, 0.6));
+  garment(w => Math.min((hipsY + 0.07) - w.y, w.y - (kneeY + 0.06)),
+    w => 0.018 + 0.03 * sm01((hipsY - w.y) / (hipsY - kneeY)), shrt, trim);
+  // arm sleeve on the shooting arm
+  garment(w => Math.sign(w.x) !== rs ? -1 : Math.min(Math.abs(w.x) - (elbowX - 0.1), (wristX - 0.035) - Math.abs(w.x)), () => 0.005, slv, slv);
   // jersey numbers front and back, on the chest bone
   const chest = bone("Spine2"); let zF = -1e9, zB = 1e9, yC = 0, nC = 0;
   for (let i = 0; i < pos.count; i++) if (cats[i] === "jersey" && /Spine2|Spine1/.test(dom[i])) { const v = toWorld(i); zF = Math.max(zF, v.z); zB = Math.min(zB, v.z); yC += v.y; nC++; }
@@ -278,6 +307,12 @@ export function updateRig(p, t, dt, other) {
   // dribble rhythm (drives the arm here and the ball in the game loop)
   p.dribU = ((p.dribU ?? 0) + dt * (DRIB.HZ_STAND + (DRIB.HZ_RUN - DRIB.HZ_STAND) * speed)) % 1;
   m.mixer.update(dt);
+  // The mixer only rewrites a bone when its animated value changed. If it left a bone alone, the bone still holds
+  // OUR pose from last frame, and adding this frame's adjustments on top would stack up (bodies folding/spinning).
+  // So: if a bone still equals what we output last frame, put back the mixer's clean value first.
+  m.clean ||= new Map();
+  for (const bn of POSED(m)) { let c = m.clean.get(bn); if (!c) m.clean.set(bn, c = { mix: bn.quaternion.clone(), out: null });
+    if (c.out && bn.quaternion.equals(c.out)) bn.quaternion.copy(c.mix); else c.mix.copy(bn.quaternion); }
   // body: dip and lean into moves, sit down on defense, lean back on step backs
   let dip = def ? 0.07 : p.hasBall ? DRIB.CROUCH : 0, leanF = def ? 0.1 : p.hasBall ? DRIB.LEAN : speed * 0.15, leanS = 0, twist = 0; // (the run clip already leans into the sprint)
   if (mv?.kind === "behind") { // from a recording: sit low and wide, hips turn to the ball side
@@ -486,6 +521,7 @@ export function updateRig(p, t, dt, other) {
       if (prev) { prev.slerp(bn.quaternion, k); bn.quaternion.copy(prev); } else m.prevQ.set(bn, bn.quaternion.clone());
     }
   }
+  for (const bn of POSED(m)) { const c = m.clean.get(bn); (c.out ||= new THREE.Quaternion()).copy(bn.quaternion); }
   p.hands = [m.b.L, m.b.R];
   p.palms = [m.b.pL, m.b.pR]; // where the ball actually sits
   p.handL = p.hands[0]; p.handR = p.hands[1];
