@@ -19,7 +19,8 @@ export const DRIB = {
   HOLD: 0.36,        // fraction of the cycle the hand rides the ball down (contact)
   FLOOR: 0.64,       // when the ball hits the floor
   LEAN: 0.05,        // forward lean with the ball (rad), + a bit more at speed
-  CROUCH: 0.06,      // how much to sit into the stance (m)
+  CROUCH: 0.13,      // how much to sit into the stance (m) - 2K-style low, wide ball-handling base
+  WIDE: 0.2,         // extra stance width with the ball
 };
 
 export async function loadRig() {
@@ -440,7 +441,7 @@ export function updateRig(p, t, dt, other) {
   m.defLeg = lerp(m.defLeg || 0, def ? 1 : 0, ease(6));
   if (!({}).legs && stanceW > 0.01 && (bend > 0.02 || m.defLeg > 0.02)) {
     const c = Math.max(bend, m.defLeg * 0.85);
-    aimLegs(m, p.group, stanceW, () => [0.15 + 0.6 * c, 0.1 + 0.55 * c, 0.12 + 0.28 * Math.max(m.defLeg, mv?.kind === "behind" ? arc : 0) + (mv?.kind === "cross" || mv?.kind === "legs" || mv?.kind === "snatch" ? 0.36 * Math.min(1, arc * 1.6) : 0)]);
+    aimLegs(m, p.group, stanceW, () => [0.15 + 0.6 * c, 0.1 + 0.55 * c, 0.12 + (p.hasBall && !p.shooting ? DRIB.WIDE : 0) + 0.28 * Math.max(m.defLeg, mv?.kind === "behind" ? arc : 0) + (mv?.kind === "cross" || mv?.kind === "legs" || mv?.kind === "snatch" ? 0.36 * Math.min(1, arc * 1.6) : 0)]);
   }
   // defensive shuffle: steps synced to ground distance (no skating), lead foot reaches, trail foot closes,
   // forward/back motion becomes short choppy steps; feet never cross
