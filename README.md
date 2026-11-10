@@ -38,7 +38,7 @@ Every push to `main` updates the site.
    - a "Support Deep Ball" product with *customers choose what to pay* → `donateUrl`
    - Settings → Billing → **Customer portal**: turn it on and copy the link → `manageUrl`
    - Add a contact email → `contactEmail`
-2. Stripe → Developers → **Webhooks** → Add endpoint `https://deepball.pages.dev/api/stripe` with events
+2. Stripe → Developers → **Webhooks** → Add endpoint `https://deepball.org/api/stripe` with events
    `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`.
    Copy its **signing secret** (whsec_…) into Cloudflare → deepball → Settings → Variables and Secrets as a Secret named `STRIPE_WEBHOOK_SECRET`, then redeploy.
 3. Checkout links carry the player's ID (`client_reference_id`), so Plus unlocks on their account automatically and turns off if they cancel.

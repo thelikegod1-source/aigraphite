@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 Disallow: /api/
-Sitemap: https://deepball.pages.dev/sitemap.xml
+Sitemap: https://deepball.org/sitemap.xml

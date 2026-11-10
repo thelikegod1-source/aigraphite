@@ -1,5 +1,5 @@
 // Keeps the app shell available offline. The game itself always talks to the live server.
-const CACHE = "deepball-v75";
+const CACHE = "deepball-v76";
 const SHELL = ["/", "/app.js", "/hoops.js", "/manifest.webmanifest", "/icons/icon-192.png"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL))); self.skipWaiting(); });
 self.addEventListener("activate", e => {

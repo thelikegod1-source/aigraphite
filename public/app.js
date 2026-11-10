@@ -3,6 +3,14 @@ const app = $("#app");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
 
+// Moved to deepball.org: carry this browser's player code across in the URL fragment (never sent to a server),
+// and pick it up on the other side, then wipe it from the address bar.
+if (location.hostname === "deepball.pages.dev") {
+  const c = store.get("db_pid"), n = store.get("db_name");
+  location.replace("https://deepball.org/" + (c ? "#move=" + encodeURIComponent(c) + (n ? "&n=" + encodeURIComponent(n) : "") : ""));
+}
+{ const m = /[#&]move=([a-z0-9]{8,40})(?:&n=([^&]*))?/i.exec(location.hash);
+  if (m) { if (!store.get("db_pid")) { store.set("db_pid", m[1]); if (m[2]) store.set("db_name", decodeURIComponent(m[2])); } history.replaceState(null, "", location.pathname + location.search); } }
 let pid = store.get("db_pid");
 if (!pid) { pid = crypto.randomUUID().replace(/-/g, ""); store.set("db_pid", pid); }
 let mode = ["guess", "draft", "hoops"].includes(store.get("db_mode")) ? store.get("db_mode") : "deep";
