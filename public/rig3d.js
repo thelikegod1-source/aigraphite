@@ -20,7 +20,7 @@ export const DRIB = {
   FLOOR: 0.64,       // when the ball hits the floor
   LEAN: 0.05,        // forward lean with the ball (rad), + a bit more at speed
   CROUCH: 0.13,      // how much to sit into the stance (m) - 2K-style low, wide ball-handling base
-  WIDE: 0.2,         // extra stance width with the ball
+  WIDE: 0.42,         // extra stance width with the ball
 };
 
 export async function loadRig() {
@@ -373,7 +373,7 @@ export function updateRig(p, t, dt, other) {
     const push = u < DRIB.HOLD ? sm(u / DRIB.HOLD) : 1 - sm((u - DRIB.HOLD) / (1 - DRIB.HOLD)); // 0 = top (catch), 1 = bottom (release)
     // dribble hand: full control (it has to meet the ball)
     aimArms(m, p.group, side => side === sd
-      ? [mixV(V(side * 0.32, -0.86, 0.22), V(side * 0.36, -0.93, 0.0), push), mixV(V(side * 0.22, -0.42, 0.85), V(side * 0.14, -0.97, 0.2), push)]
+      ? [mixV(V(side * 0.42, -0.85, 0.3), V(side * 0.45, -0.89, 0.08), push), mixV(V(side * 0.3, -0.72, 0.62), V(side * 0.18, -0.98, 0.1), push)] // low handle: catch at the knee, out to the side
       : null, m.guardW);
     // off arm: shield when slow; at speed it pumps with the stride like a real sprint (opposite the near leg)
     const runK = Math.min(1, Math.max(0, (speed - 0.05) * 3));
