@@ -579,13 +579,83 @@ button.ghost:hover,.tabs .tab:hover{box-shadow:none;border-color:#3a4c6a}
 .h3-wrap .hp-msg{z-index:4;top:22%}
 .h3-wrap .hp-end{z-index:5}
 .about{max-width:720px;margin:28px auto 70px;padding:0 16px;color:#9fb0c8;font-size:.9rem;line-height:1.5}.about h2{font-size:1.05rem;color:#dfe7f3;margin:0 0 6px}.about h3{font-size:.95rem;color:#dfe7f3;margin:14px 0 4px}.about ul{padding-left:18px;margin:0}.about li{margin:4px 0}
+/* ================= Court theme: hardwood, arena lights, basketball orange (overrides everything above; game screens untouched) ================= */
+:root{--amber:#ff8a2b;--ball:#f2741a;--ball-hi:#ff9d4a;--seam:#1c0d03;--wood:#3b2414;--bg:#090d14;--court:#0f1621;--line:#24303f}
+/* Arena: spotlights from the rafters, a glossy hardwood floor fading up from the bottom, court lines painted on it */
+html{background:var(--bg)}
+body{background:transparent!important}
+body::before{opacity:1;inset:0;z-index:-2;
+  background:
+   url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1000 420' fill='none' stroke='%23f3e6d4' stroke-width='3' stroke-opacity='.8'%3E%3Cpath d='M0 418h1000'/%3E%3Crect x='380' y='190' width='240' height='228'/%3E%3Ccircle cx='500' cy='190' r='120'/%3E%3Cpath d='M90 418V330a410 410 0 0 1 820 0v88'/%3E%3Cpath d='M455 418v-22h90v22' stroke-opacity='.35'/%3E%3C/svg%3E") 50% 100%/min(1100px,140vw) auto no-repeat,
+   linear-gradient(180deg,var(--bg) 0,var(--bg) 38%,rgba(9,13,20,.8) 62%,rgba(9,13,20,.42) 100%),
+   radial-gradient(ellipse 60% 22% at 50% 100%,rgba(255,190,120,.16),transparent 70%),
+   repeating-linear-gradient(90deg,transparent 0 37px,rgba(0,0,0,.35) 37px 38px),
+   repeating-linear-gradient(90deg,#4a2c17 0 38px,#553219 38px 76px,#43281a 76px 114px,#5a361c 114px 152px,#4d2e18 152px 190px),
+   var(--wood)}
+body::after{display:block;inset:0;z-index:-1;animation:none;transform:none;
+  background:
+   radial-gradient(ellipse 30% 55% at 18% -8%,rgba(255,214,160,.10),transparent 70%),
+   radial-gradient(ellipse 30% 55% at 82% -8%,rgba(255,214,160,.10),transparent 70%),
+   radial-gradient(ellipse 50% 40% at 50% -12%,rgba(255,138,43,.12),transparent 70%)}
+
+/* Header: ball logo, jersey-style wordmark, court stripe */
+.logo-ball{display:inline-block;width:.78em;height:.78em;margin-right:.16em;vertical-align:-.06em;filter:drop-shadow(0 .06em .12em rgba(0,0,0,.5));transition:transform .6s cubic-bezier(.2,.9,.3,1)}
+h1:hover .logo-ball{transform:rotate(200deg)}
+h1{letter-spacing:.005em;text-shadow:0 3px 0 rgba(0,0,0,.45)}
+h1 span{color:var(--amber);-webkit-text-stroke:0;text-shadow:0 3px 0 #6b2c00,0 0 28px rgba(255,138,43,.35)}
+.net::after{content:"";display:block;height:4px;margin-top:14px;border-radius:2px;
+  background:linear-gradient(90deg,var(--amber) 0 22%,transparent 22% 24%,#f3e6d4 24% 26%,transparent 26% 28%,rgba(255,255,255,.12) 28% 100%)}
+.tag{color:#b9c3d1}
+
+/* Panels: locker-room dark with an orange jersey trim along the top */
+.panel{position:relative;background:linear-gradient(180deg,rgba(255,255,255,.03),transparent 120px),var(--court);border-color:var(--line);
+  box-shadow:0 20px 40px -24px rgba(0,0,0,.9),inset 0 3px 0 -1px var(--amber)}
+.panel > .label:first-child,.panel > .row:first-child .label,.panel > label.label:first-child{border-left:0;padding-left:20px;position:relative;color:#c9d1dc}
+.panel > .label:first-child::before,.panel > .row:first-child .label::before,.panel > label.label:first-child::before{content:"";position:absolute;left:0;top:50%;width:13px;height:13px;margin-top:-7px;border-radius:50%;
+  background:linear-gradient(90deg,transparent 45%,var(--seam) 45% 55%,transparent 55%),linear-gradient(0deg,transparent 45%,var(--seam) 45% 55%,transparent 55%),radial-gradient(circle at 35% 30%,var(--ball-hi),var(--ball) 60%,#a84600)}
+
+/* Buttons: pebbled basketball leather */
+button:not(.ghost):not(.link):not(.tab):not([aria-pressed]),a.btn{color:#1d0c00;
+  background:radial-gradient(rgba(90,30,0,.22) .8px,transparent 1.3px) 0 0/4px 4px,linear-gradient(180deg,var(--ball-hi),var(--ball))!important;
+  box-shadow:inset 0 -3px 0 rgba(120,40,0,.45),0 8px 20px -10px rgba(242,116,26,.8)!important}
+button:not(.ghost):not(.link):not(.tab):not([aria-pressed]):hover,a.btn:hover{filter:brightness(1.08)}
+button:not(.ghost):not(.link):not(.tab):not([aria-pressed]):active{box-shadow:inset 0 -1px 0 rgba(120,40,0,.45)!important;filter:brightness(.95)}
+button.ghost{background:rgba(255,255,255,.02);border-color:#2e3b4d}
+button.ghost:hover,.tabs .tab:hover{border-color:var(--amber);color:var(--fg)}
+.seg button[aria-pressed="true"]{background:var(--ball);color:#1d0c00}
+
+/* Nav: jersey tabs */
+.tabs .tab{background:rgba(15,22,33,.85);border-color:var(--line)}
+.tabs .tab[aria-current]{background:linear-gradient(180deg,rgba(255,138,43,.18),rgba(255,138,43,.04));box-shadow:inset 0 -3px 0 var(--amber);color:#fff;border-color:rgba(255,138,43,.45)}
+
+/* Mode cards: a faint ball seam watermark, selected card lights up like it's under the spotlight */
+.segcard{overflow:hidden;background:linear-gradient(110deg,#121b28,#0d141f);border-color:var(--line)}
+.segcard::after{content:"";position:absolute;right:-34px;top:50%;width:120px;height:120px;margin-top:-60px;opacity:.07;pointer-events:none;transition:opacity .25s,transform .5s cubic-bezier(.2,.9,.3,1);
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none' stroke='%23fff' stroke-width='3'%3E%3Ccircle cx='50' cy='50' r='47'/%3E%3Cpath d='M3 50h94M50 3v94M18 16c18 18 18 50 0 68M82 16c-18 18-18 50 0 68'/%3E%3C/svg%3E") center/contain no-repeat}
+button.segcard::after{display:block}
+.segcard:hover::after{opacity:.12;transform:rotate(30deg)}
+.segcard[aria-pressed="true"]{background:linear-gradient(110deg,rgba(255,138,43,.16),rgba(255,138,43,.03) 70%),#121b28;border-color:rgba(255,138,43,.6)!important;box-shadow:inset 4px 0 0 var(--amber),0 12px 30px -16px rgba(255,138,43,.7)!important}
+.segcard[aria-pressed="true"]::after{opacity:.22;filter:sepia(1) saturate(6) hue-rotate(-12deg);transform:rotate(30deg)}
+.segcard[aria-pressed="true"] .ic{color:#1d0c00;background:radial-gradient(circle at 35% 30%,var(--ball-hi),var(--ball) 65%);border-color:transparent}
+.segcard[aria-pressed="true"] b{color:#fff}
+
+/* Player strip: Elo like a scoreboard digit box */
+.pstrip .elo{background:#05080d;color:var(--amber);border-color:#2a2014;box-shadow:inset 0 0 10px rgba(255,138,43,.15)}
+
+/* Ticker: arena LED ribbon */
+.tk-label{background:linear-gradient(180deg,var(--ball-hi),var(--ball));color:#1d0c00;border-right:0;font-weight:700}
+.ticker{background:#05080d;border-top:2px solid var(--amber)}
+
+/* About section sits on the floor: give it a backboard card so it stays readable */
+.about{background:rgba(9,13,20,.82);border:1px solid var(--line);border-radius:10px;padding:18px 20px;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)}
+@media (prefers-reduced-motion:reduce){.logo-ball,.segcard::after{transition:none}}
 </style>
 </head>
 <body>
 <div class="wrap">
   <header class="net">
     <div class="netbar"><span class="onair"><i></i>Live</span><span class="netclock" id="netclock"></span></div>
-    <h1>Deep<span> Ball</span></h1>
+    <h1><svg class="logo-ball" viewBox="0 0 100 100" aria-hidden="true"><defs><radialGradient id="lb" cx=".35" cy=".3" r=".75"><stop offset="0" stop-color="#ffb26b"/><stop offset=".55" stop-color="#f2741a"/><stop offset="1" stop-color="#9c3f00"/></radialGradient></defs><circle cx="50" cy="50" r="47" fill="url(#lb)"/><g fill="none" stroke="#1c0d03" stroke-width="4" stroke-linecap="round"><path d="M3 50h94M50 3v94M18 16c18 18 18 50 0 68M82 16c-18 18-18 50 0 68"/></g></svg>Deep<span> Ball</span></h1>
     <p class="tag">1v1 NBA knowledge games. Deep pulls win.</p>
   </header>
   <main id="app"></main>
