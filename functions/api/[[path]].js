@@ -39,6 +39,7 @@ async function schema(db) {
     db.prepare("CREATE TABLE IF NOT EXISTS lobbies (code TEXT PRIMARY KEY, data TEXT, v INTEGER, t INTEGER)"),
     db.prepare("CREATE TABLE IF NOT EXISTS tours (code TEXT PRIMARY KEY, data TEXT, v INTEGER, t INTEGER)"),
     db.prepare("CREATE TABLE IF NOT EXISTS auth (pid TEXT PRIMARY KEY, salt TEXT, hash TEXT, t INTEGER)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS bans (pid TEXT PRIMARY KEY, t INTEGER)"),
     db.prepare("CREATE TABLE IF NOT EXISTS logfail (lname TEXT PRIMARY KEY, n INTEGER, t INTEGER)"),
     db.prepare("CREATE TABLE IF NOT EXISTS verdicts (prompt TEXT, ans TEXT, valid INTEGER, score INTEGER, why TEXT, PRIMARY KEY (prompt, ans))"),
   ]);
@@ -552,13 +553,16 @@ export async function onRequest({ request, env, params }) {
   }
 
   if (path === "leaderboard") {
-    const r = await db.prepare("SELECT p.name, p.elo, p.w, p.l, p.d, COALESCE(x.active,0) AS plus FROM players p LEFT JOIN plus x ON x.pid=p.pid WHERE p.w+p.l+p.d > 0 ORDER BY p.elo DESC, p.w DESC LIMIT 50").all();
+    const r = await db.prepare("SELECT p.name, p.elo, p.w, p.l, p.d, COALESCE(x.active,0) AS plus FROM players p LEFT JOIN plus x ON x.pid=p.pid WHERE p.w+p.l+p.d > 0 AND p.pid NOT IN (SELECT pid FROM bans) ORDER BY p.elo DESC, p.w DESC LIMIT 50").all();
     return json({ players: r.results });
   }
 
   const pid = clean(body.pid || url.searchParams.get("pid"), 40);
   if (!/^[a-z0-9]{8,40}$/i.test(pid)) return json({ error: "bad player id" }, 400);
   // Online count: remember when each player was last here (at most one write per 30s each).
+  // Banned accounts can only ask who they are (so the site can show the banned screen).
+  if (path !== "me" && path !== "login" && await db.prepare("SELECT 1 AS x FROM bans WHERE pid=?").bind(pid).first())
+    return json({ error: "This account is banned.", banned: true }, 403);
   await db.prepare("INSERT INTO seen (pid,t) VALUES (?1,?2) ON CONFLICT(pid) DO UPDATE SET t=?2 WHERE seen.t < ?3").bind(pid, now, now - 30000).run();
 
   // Log in with username + password: hands back that account's player ID so any device can pick it up.
@@ -573,6 +577,7 @@ export async function onRequest({ request, env, params }) {
       return json({ error: "Wrong username or password." }, 401);
     }
     await db.prepare("DELETE FROM logfail WHERE lname=?").bind(lname).run();
+    if (await db.prepare("SELECT 1 AS x FROM bans WHERE pid=?").bind(acct.pid).first()) return json({ error: "This account is banned." }, 403);
     return json({ ok: true, pid: acct.pid, name: acct.name });
   }
 
@@ -593,6 +598,7 @@ export async function onRequest({ request, env, params }) {
 
   if (path === "me") {
     const p = await db.prepare("SELECT name, elo, w, l, d, lname FROM players WHERE pid=?").bind(pid).first();
+    if (await db.prepare("SELECT 1 AS x FROM bans WHERE pid=?").bind(pid).first()) return json({ banned: true, name: null, elo: 1000, w: 0, l: 0, d: 0 });
     const admin = await isAdmin(pid);
     const plus = await isPlus(db, pid);
     if (!p) return json({ name: null, elo: 1000, w: 0, l: 0, d: 0, rank: null, admin, plus, haspw: false });
@@ -859,12 +865,30 @@ export async function onRequest({ request, env, params }) {
     const q = clean(body.q, 16).toLowerCase(), off = Math.max(0, Math.min(100000, Number(body.offset) || 0));
     const where = "p.lname IS NOT NULL AND (?1 = '' OR instr(p.lname, ?1) > 0)";
     const total = (await db.prepare(`SELECT COUNT(*) AS n FROM players p WHERE ${where}`).bind(q).first()).n;
-    const r = await db.prepare(`SELECT p.name, p.lname, p.elo, p.w, p.l, p.d, p.created, p.t, COALESCE(x.active,0) AS plus, x.customer, a.pid IS NOT NULL AS haspw
-      FROM players p LEFT JOIN plus x ON x.pid=p.pid LEFT JOIN auth a ON a.pid=p.pid WHERE ${where}
+    const r = await db.prepare(`SELECT p.name, p.lname, p.elo, p.w, p.l, p.d, p.created, p.t, COALESCE(x.active,0) AS plus, x.customer, a.pid IS NOT NULL AS haspw, b.pid IS NOT NULL AS banned
+      FROM players p LEFT JOIN plus x ON x.pid=p.pid LEFT JOIN auth a ON a.pid=p.pid LEFT JOIN bans b ON b.pid=p.pid WHERE ${where}
       ORDER BY p.created IS NULL, p.created DESC, p.t DESC LIMIT 100 OFFSET ?2`).bind(q, off).all();
-    const accounts = r.results.map(a => ({ name: a.name, created: a.created, last: a.t, elo: a.elo, w: a.w, l: a.l, d: a.d, haspw: !!a.haspw,
+    const accounts = r.results.map(a => ({ name: a.name, created: a.created, last: a.t, elo: a.elo, w: a.w, l: a.l, d: a.d, haspw: !!a.haspw, banned: !!a.banned,
       plus: !!a.plus, paid: !!a.plus && a.customer && a.customer !== "gift" }));
     return json({ total, accounts });
+  }
+  // Owner-only: ban / unban, and add or remove Elo.
+  if (path === "admin/ban" || path === "admin/elo") {
+    if (!(await isAdmin(pid))) return json({ error: "not found" }, 404);
+    const t = await db.prepare("SELECT pid, name, elo FROM players WHERE lname=?").bind(clean(body.name, 16).toLowerCase()).first();
+    if (!t) return json({ error: "No account with that username." }, 404);
+    if (path === "admin/ban") {
+      if (body.on !== false) {
+        if (await isAdmin(t.pid)) return json({ error: "You can't ban your own owner account." }, 400);
+        await db.batch([db.prepare("INSERT OR REPLACE INTO bans (pid,t) VALUES (?,?)").bind(t.pid, now),
+          ...["mq", "queue", "assign"].map(tb => db.prepare(`DELETE FROM ${tb} WHERE pid=?`).bind(t.pid))]);
+      } else await db.prepare("DELETE FROM bans WHERE pid=?").bind(t.pid).run();
+      return json({ ok: true, name: t.name, banned: body.on !== false });
+    }
+    const delta = Math.round(Number(body.delta));
+    if (!Number.isFinite(delta) || delta === 0 || Math.abs(delta) > 5000) return json({ error: "Enter an Elo amount between 1 and 5000." }, 400);
+    const r = await db.prepare("UPDATE players SET elo=MAX(0, elo+?) WHERE pid=? RETURNING elo").bind(delta, t.pid).first();
+    return json({ ok: true, name: t.name, elo: r.elo });
   }
   if (path === "admin/delete") {
     if (!(await isAdmin(pid))) return json({ error: "not found" }, 404);

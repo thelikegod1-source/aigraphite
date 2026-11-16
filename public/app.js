@@ -67,6 +67,7 @@ const ICON = {
 /* ---------- Play ---------- */
 function home(msg) {
   stop(); view = "home"; matchId = null;
+  if (me.banned) return banned();
   if (!me.name) return pickName(msg);
   if (me.haspw === false) return mustSetPassword(msg);
   const M = MODES[mode];
@@ -199,6 +200,12 @@ function pickName(msg, tab = store.get("db_had") ? "login" : "new") {
   $("#restore").onclick = profile;
 }
 
+function banned() {
+  stop(); view = "banned";
+  app.innerHTML = `<div class="panel"><span class="label">Account banned</span>
+    <p class="big">Banned</p><p class="small">This account was banned from Deep Ball. If you think it's a mistake, DM @wyaclaw on TikTok or Discord.</p></div>`;
+}
+
 // Accounts made before passwords existed must add one before playing.
 function mustSetPassword(msg) {
   stop(); view = "setpw";
@@ -225,17 +232,23 @@ function mustSetPassword(msg) {
 }
 
 // Owner menu: every account, newest first, with delete.
-async function accounts(q = "", offset = 0, msg = "") {
+async function accounts(q = "", offset = 0, msg = "", open = "") {
   stop(); view = "accounts";
   const day = t => new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
   app.innerHTML = `${nav("profile")}<div class="panel"><span class="label">Accounts</span><p class="status pulse">Loading…</p></div>`; wireNav();
   let d; try { d = await api("admin/accounts", { q, offset }); } catch (e) { return profile(e.message); }
   if (view !== "accounts") return;
   const rows = d.accounts.map(a => `<li class="acct">
-      <div class="acct-top"><b>${esc(a.name)}</b>${a.plus ? `<span class="tagp">${a.paid ? "Plus · paying" : "Plus"}</span>` : ""}${a.haspw ? "" : `<span class="tagn">no password</span>`}</div>
+      <div class="acct-top"><b>${esc(a.name)}</b>${a.banned ? `<span class="tagb">banned</span>` : ""}${a.plus ? `<span class="tagp">${a.paid ? "Plus · paying" : "Plus"}</span>` : ""}${a.haspw ? "" : `<span class="tagn">no password</span>`}${a.name === me.name ? `<span class="tagn">you</span>` : ""}</div>
       <p class="small">${a.created ? `Made ${day(a.created)}` : `Made before Nov 16, 2026 · last active ${day(a.last)}`}</p>
       <p class="small">${a.elo} Elo · ${a.w}-${a.l}${a.d ? "-" + a.d : ""}</p>
-      ${a.name === me.name ? `<span class="tagn">you</span>` : `<button class="ghost danger" data-del="${esc(a.name)}" data-paid="${a.paid ? 1 : ""}">Delete</button>`}</li>`).join("");
+      <details class="acct-x"${open === a.name ? " open" : ""}><summary>Manage</summary>
+        <form class="btns" data-elo="${esc(a.name)}" autocomplete="off"><input type="number" inputmode="numeric" min="1" max="5000" placeholder="Elo amount" aria-label="Elo amount" style="flex:1 1 40%"><button class="ghost" data-sign="1">+ Add Elo</button><button class="ghost" data-sign="-1">− Remove Elo</button></form>
+        <div class="btns">
+          <button class="ghost" data-plus="${esc(a.name)}" data-on="${a.plus ? "" : 1}" data-paid="${a.paid ? 1 : ""}">${a.plus ? "Remove Plus" : "Give Plus"}</button>
+          ${a.name === me.name ? "" : `<button class="ghost danger" data-ban="${esc(a.name)}" data-on="${a.banned ? "" : 1}">${a.banned ? "Unban" : "Ban"}</button>
+          <button class="ghost danger" data-del="${esc(a.name)}" data-paid="${a.paid ? 1 : ""}">Delete</button>`}
+        </div></details></li>`).join("");
   app.innerHTML = `${nav("profile")}<div class="panel"><span class="label">Accounts · ${d.total}</span>
     <form id="as" class="btns" autocomplete="off"><input type="text" id="aq" maxlength="16" placeholder="Search usernames" value="${esc(q)}" style="flex:1 1 60%"><button class="ghost" style="flex:0 0 auto">Search</button></form>
     ${msg ? `<p class="small ok">${esc(msg)}</p>` : ""}
@@ -246,6 +259,30 @@ async function accounts(q = "", offset = 0, msg = "") {
   if ($("#aprev")) $("#aprev").onclick = () => accounts(q, Math.max(0, offset - 100));
   if ($("#anext")) $("#anext").onclick = () => accounts(q, offset + 100);
   $("#aback").onclick = () => profile();
+  const act = async (path, body, done) => {
+    try { const r = await api(path, body); accounts(q, offset, done(r), body.name); }
+    catch (e) { accounts(q, offset, "", body.name); alert(e.message); }
+  };
+  document.querySelectorAll("[data-elo]").forEach(f => {
+    let sign = 1;
+    f.querySelectorAll("[data-sign]").forEach(b => b.onclick = () => { sign = +b.dataset.sign; });
+    f.onsubmit = e => {
+      e.preventDefault();
+      const n = Math.round(Number(f.querySelector("input").value));
+      if (!n || n < 1) return alert("Type how much Elo first (like 50).");
+      act("admin/elo", { name: f.dataset.elo, delta: sign * n }, r => `${r.name} is now at ${r.elo} Elo.`);
+    };
+  });
+  document.querySelectorAll("[data-plus]").forEach(b => b.onclick = () => {
+    const name = b.dataset.plus, on = !!b.dataset.on;
+    if (!on && b.dataset.paid && !confirm(`${name} pays for Plus through Stripe. Removing it here does NOT stop their payments. Cancel in Stripe too. Remove Plus anyway?`)) return;
+    act("admin/plus", { target: name, on, name }, r => `${on ? "Gave Plus to" : "Removed Plus from"} ${r.name || name}.`);
+  });
+  document.querySelectorAll("[data-ban]").forEach(b => b.onclick = () => {
+    const name = b.dataset.ban, on = !!b.dataset.on;
+    if (on && !confirm(`Ban ${name}? They can't play, log in, or show on the leaderboard until you unban them.`)) return;
+    act("admin/ban", { name, on }, r => `${r.name} is ${on ? "banned" : "unbanned"}.`);
+  });
   document.querySelectorAll("[data-del]").forEach(b => b.onclick = async () => {
     const name = b.dataset.del;
     const warn = b.dataset.paid ? `\n\n${name} is PAYING for Plus. Deleting the account does NOT cancel their Stripe subscription. Cancel it in Stripe too.` : "";

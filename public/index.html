@@ -667,6 +667,16 @@ input[type=password]:focus{outline:2px solid var(--amber);outline-offset:1px;bor
 .acct .danger:hover{border-color:var(--lose);color:#fff;background:rgba(255,107,94,.15)}
 .tagp,.tagn{font-family:var(--mono);font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;border-radius:999px;padding:2px 8px}
 .tagp{color:#1d0c00;background:var(--amber)}.tagn{color:var(--muted);border:1px solid var(--line)}
+.acct{grid-template-columns:1fr}
+.acct-x{margin-top:6px}
+.acct-x summary{cursor:pointer;font-family:var(--display);font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--amber);padding:6px 0;list-style:none}
+.acct-x summary::-webkit-details-marker{display:none}
+.acct-x summary::after{content:" ▾"}.acct-x[open] summary::after{content:" ▴"}
+.acct-x .btns{margin-top:8px}
+.acct-x .btns button{font-size:.95rem;padding:9px 10px;flex:1 1 30%}
+.acct-x input[type=number]{font:inherit;font-size:1rem;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:.55em .7em;min-width:0}
+.acct .danger{grid-column:auto;grid-row:auto;justify-self:auto}
+.tagb{font-family:var(--mono);font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;border-radius:999px;padding:2px 8px;color:#fff;background:var(--lose)}
 </style>
 </head>
 <body>
@@ -693,7 +703,7 @@ input[type=password]:focus{outline:2px solid var(--amber);outline-offset:1px;bor
 <div class="ticker" role="marquee" aria-label="Deep Ball ticker"><span class="tk-label">Deep Ball<b>Ticker</b></span><div class="tk-track"><div class="tk-run" id="tk"></div></div></div>
 <script src="support-config.js"></script>
 <script src="franchises.js"></script>
-<script src="app.js?v=84"></script>
+<script src="app.js?v=85"></script>
 <script src="hoops.js"></script>
 </body>
 </html>
