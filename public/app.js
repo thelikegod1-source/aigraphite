@@ -67,6 +67,7 @@ const ICON = {
 /* ---------- Play ---------- */
 function home(msg) {
   stop(); view = "home"; matchId = null;
+  if (updateReady) return showUpdateGate();
   if (me.banned) return banned();
   if (!me.name) return pickName(msg);
   if (me.haspw === false) return mustSetPassword(msg);
@@ -115,7 +116,7 @@ async function hoops(vsAI, freestyle = false) {
   const root = app.querySelector(".hoops-panel"), opts = { vsAI, freestyle, debug: /debug3d/.test(location.search), p1: vsAI ? me.name : "Player 1", onExit: () => { hoopsStop = null; home(); } };
   if (!vsAI) { hoopsStop = window.Hoops.start(root, opts); return; }
   try {
-    const mod = await import("./hoops3d.js?v=88");
+    const mod = await import("./hoops3d.js?v=89");
     if (view === "hoops") hoopsStop = mod.start(root, opts);
   } catch (e) { // older devices without WebGL modules: fall back to the 2D game
     hoopsStop = window.Hoops.start(root, opts);
@@ -143,7 +144,7 @@ async function hoopsOnline(mode, code) {
   $("#nx").onclick = () => { ac.abort(); home(); };
   hoopsStop = () => ac.abort();
   try {
-    const [net, mod] = await Promise.all([import("./hoopnet.js?v=88"), import("./hoops3d.js?v=88")]);
+    const [net, mod] = await Promise.all([import("./hoopnet.js?v=89"), import("./hoops3d.js?v=89")]);
     const link = await net.connect({ api, mode, code, signal: ac.signal, onStatus: (txt, c) => {
       if (view !== "hoops" || !$("#ns")) return;
       $("#ns").textContent = txt;
@@ -1169,6 +1170,36 @@ function netClock() {
   c.textContent = new Date().toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 netClock(); setInterval(netClock, 30000); ticker(); setInterval(ticker, 120000);
+
+/* ---------- Update gate: an old copy of the site can't keep playing ---------- */
+// This page's version is the ?v= on its own script tag; the live version is whatever index.html links now.
+if (/[?&]u=\d+/.test(location.search)) history.replaceState(null, "", location.pathname + location.hash); // tidy the address after an update refresh
+const MY_VERSION = +((document.currentScript?.src || "").match(/[?&]v=(\d+)/) || [])[1] || 0;
+let updateReady = false;
+const MID_GAME = () => ["match", "hoops", "tour"].includes(view); // don't yank someone out of a live game
+function showUpdateGate() {
+  if (document.getElementById("upd")) return;
+  stop();
+  const el = document.createElement("div"); el.id = "upd"; el.className = "upd"; el.setAttribute("role", "alertdialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-labelledby", "updh");
+  el.innerHTML = `<div class="upd-card"><svg class="upd-ball" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="47" fill="#f2741a"/><g fill="none" stroke="#1c0d03" stroke-width="4" stroke-linecap="round"><path d="M3 50h94M50 3v94M18 16c18 18 18 50 0 68M82 16c-18 18-18 50 0 68"/></g></svg>
+    <h2 id="updh">New update!</h2><p>Deep Ball just got updated. Refresh to get the newest version and keep playing.</p>
+    <button id="updgo">Refresh now</button></div>`;
+  document.body.appendChild(el);
+  // a one-off address so no school filter or cache can hand back the old page
+  document.getElementById("updgo").onclick = () => location.replace(location.pathname + "?u=" + Date.now() + location.hash);
+  document.getElementById("updgo").focus();
+}
+async function checkVersion() {
+  if (!MY_VERSION || updateReady) return;
+  try {
+    const html = await (await fetch("/?vcheck=" + Date.now(), { cache: "no-store" })).text();
+    const live = +((html.match(/app\.js\?v=(\d+)/) || [])[1]) || 0;
+    if (live > MY_VERSION) { updateReady = true; if (!MID_GAME()) showUpdateGate(); }
+  } catch {}
+}
+setInterval(checkVersion, 120000);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkVersion(); });
+setTimeout(checkVersion, 5000);
 
 /* ---------- Start ---------- */
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
