@@ -21,6 +21,12 @@
    - Optional: `GEMINI_MODEL` to change the model (default `gemini-2.5-flash`).
 5. **Redeploy:** Deployments → latest → Retry deployment. Done.
 
+### Street Hoops online on school/work Wi-Fi (TURN relay)
+Online Street Hoops connects players directly. Many school networks block that, so the game can relay through Cloudflare's TURN server over port 443 instead (generous free tier).
+1. dash.cloudflare.com → **Realtime** → **TURN Server** → **Create**. Copy the **Turn Token ID** and the **API Token**.
+2. Workers & Pages → deepball → Settings → Variables and Secrets: add `TURN_KEY_ID` (the Token ID) and a **Secret** `TURN_KEY_API_TOKEN` (the API token).
+3. Redeploy. Without these, online play still works on home Wi-Fi/mobile data (STUN only).
+
 Every push to `main` updates the site.
 
 ## Features

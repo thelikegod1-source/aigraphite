@@ -519,6 +519,25 @@ async function setPassword(db, pid, password, now) {
 }
 const pwError = pw => typeof pw !== "string" || pw.length < 6 ? "Password needs at least 6 characters." : pw.length > 100 ? "Password is too long." : null;
 
+const STUN_ONLY = [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"] }];
+let iceCache = null; // { servers, until }
+async function iceServers(env, now) {
+  if (!env.TURN_KEY_ID || !env.TURN_KEY_API_TOKEN) return STUN_ONLY;
+  if (iceCache && iceCache.until > now) return iceCache.servers;
+  try {
+    const r = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/generate-ice-servers`, {
+      method: "POST", headers: { authorization: `Bearer ${env.TURN_KEY_API_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ ttl: 86400 }),
+    });
+    if (!r.ok) throw new Error("TURN " + r.status);
+    const d = await r.json();
+    const list = (Array.isArray(d.iceServers) ? d.iceServers : [d.iceServers]).filter(Boolean)
+      // browsers refuse port 53, so drop those addresses
+      .map(x => ({ ...x, urls: [].concat(x.urls).filter(u => !/:53(\?|$)/.test(u)) })).filter(x => x.urls.length);
+    iceCache = { servers: list.length ? list : STUN_ONLY, until: now + 6 * 3600 * 1000 }; // credentials last 24h; refresh well before
+    return iceCache.servers;
+  } catch { return STUN_ONLY; }
+}
+
 async function nameFor(db, pid, fallback) {
   const r = await db.prepare("SELECT name FROM players WHERE pid=?").bind(pid).first();
   return r?.name || clean(fallback, 20) || "Player";
@@ -645,6 +664,10 @@ export async function onRequest({ request, env, params }) {
 
   // Street Hoops online: the server only pairs players and passes the WebRTC handshake along.
   // The game itself runs peer to peer.
+  // Street Hoops: connection servers. With Cloudflare TURN keys set (TURN_KEY_ID + TURN_KEY_API_TOKEN), players
+  // behind school/work Wi-Fi that blocks direct connections get relayed over port 443. Without them: STUN only.
+  if (path === "hoops/ice") return json({ iceServers: await iceServers(env, now) });
+
   if (path.startsWith("hoops/")) {
     const sdp = v => String(v ?? "").slice(0, 12000), op = path.slice(6);
     await db.prepare("DELETE FROM hoopnet WHERE t<?").bind(now - 120000).run();

@@ -16,7 +16,7 @@ models and game feel. The owner tests on an iPhone and reports problems with scr
   - `public/app.js` – site shell, menus, trivia modes; `public/hoops.js` – old 2D game (fallback).
   - `public/models/` – `player.glb`, `player2.glb` (MakeHuman via MPFB, Mixamo-named 52-bone rig), `anim_*.glb`
     (idle/walk/run retargeted clips), ball textures. `tools/autorig.mjs` – custom auto-rigger.
-- Every deploy: bump `CACHE` in `public/sw.js` AND the `app.js?v=` number in `index.html` + `sw.js` SHELL (currently 86). The version tag stops school web filters from serving a stale app.js.
+- Every deploy: bump `CACHE` in `public/sw.js` AND the `app.js?v=` number in `index.html` + `sw.js` SHELL (currently 87). The version tag stops school web filters from serving a stale app.js.
 
 ## How to test
 - Local: `wrangler pages dev` with a temp `wrangler.toml` (D1 binding `DB`, `pages_build_output_dir = "public"`); delete it

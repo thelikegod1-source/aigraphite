@@ -1,9 +1,12 @@
 // Street Hoops online: peer-to-peer link between two players (WebRTC data channels).
 // The server only passes the handshake along. The host's device runs the game;
 // the guest sends inputs and gets the game state back.
-const ICE = [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"] }];
+let ICE = [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"] }];
+// Ask the server for connection servers: includes a TURN relay (port 443) when the owner has set one up,
+// which gets players through school/work Wi-Fi that blocks direct connections.
+async function loadIce(api) { try { const d = await api("hoops/ice", {}); if (d.iceServers?.length) ICE = d.iceServers; } catch {} }
 
-function gathered(pc, ms = 2500) {
+function gathered(pc, ms = 4000) { // relay addresses can take a moment longer to gather
   return new Promise(res => {
     if (pc.iceGatheringState === "complete") return res();
     const done = () => { clearTimeout(tm); res(); };
@@ -38,6 +41,7 @@ const openBoth = (chans, ms) => Promise.race([
 // mode: "quick" (anyone), "host" (make a code for a friend), "join" (enter a friend's code)
 export async function connect({ api, mode, code, onStatus = () => {}, signal }) {
   if (!window.RTCPeerConnection) throw new Error("This browser can't play online.");
+  await loadIce(api);
   if (mode === "quick" || mode === "join") {
     onStatus(mode === "quick" ? "Looking for a player…" : "Joining…");
     const g = await api(mode === "quick" ? "hoops/quick" : "hoops/join", { code });
