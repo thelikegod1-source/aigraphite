@@ -533,6 +533,9 @@ async function iceServers(env, now) {
     const list = (Array.isArray(d.iceServers) ? d.iceServers : [d.iceServers]).filter(Boolean)
       // browsers refuse port 53, so drop those addresses
       .map(x => ({ ...x, urls: [].concat(x.urls).filter(u => !/:53(\?|$)/.test(u)) })).filter(x => x.urls.length);
+    // School firewalls usually only allow web ports, so make sure the relay is also tried on 443 (TLS) and 80.
+    const turn = list.find(x => x.username && x.urls.some(u => u.startsWith("turn")));
+    if (turn && !turn.urls.some(u => /:443\?/.test(u))) turn.urls.push("turns:turn.cloudflare.com:443?transport=tcp", "turn:turn.cloudflare.com:80?transport=tcp");
     iceCache = { servers: list.length ? list : STUN_ONLY, until: now + 6 * 3600 * 1000 }; // credentials last 24h; refresh well before
     return iceCache.servers;
   } catch { return STUN_ONLY; }
