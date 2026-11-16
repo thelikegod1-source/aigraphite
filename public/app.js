@@ -68,13 +68,13 @@ const ICON = {
 function home(msg) {
   stop(); view = "home"; matchId = null;
   if (!me.name) return pickName(msg);
+  if (me.haspw === false) return mustSetPassword(msg);
   const M = MODES[mode];
   app.innerHTML = `${nav("home")}
   <div class="panel">
     <span class="label">Matchday</span>
     <div class="pstrip"><span>${esc(me.name)}</span><span class="elo">${me.elo} ELO${me.rank ? ` · #${me.rank}` : ""}</span></div>
     ${me.admin ? `<p class="troll-on">😈 Troll mode on · the button shows up during matches</p>` : ""}
-    ${me.haspw === false ? `<form id="spw" class="stack nudge" autocomplete="on"><input type="text" hidden autocomplete="username" value="${esc(me.name)}"><p class="small"><b>Set a password</b> so you can log in on other devices, like a school Chromebook that forgets you.</p><div class="btns"><input type="password" id="spwi" placeholder="New password (6+ characters)" autocomplete="new-password" style="flex:1 1 60%"><button style="flex:0 0 auto">Save</button></div><p class="err" id="spwe" hidden></p></form>` : ""}
     <p class="online" id="online"><i></i><span>${online ? `${online} online now` : "Checking who's online…"}</span></p>
     <div class="segcards" role="group" aria-label="Game mode">
       ${[["deep", ICON.deep, "Deep Ball", "Name the deepest cut"], ["guess", ICON.guess, "Guess the Player", "Clues drop. Name him first."], ["draft", ICON.draft, "Spin & Draft", "Spin a team. Draft a legend."], ["hoops", ICON.hoops, "Street Hoops", "3D streetball 1v1. First to 15."]]
@@ -90,11 +90,6 @@ function home(msg) {
   <div class="panel"><span class="label">How ${esc(M.name)} works</span>
     <ul class="how">${M.how.map(h => `<li>${esc(h)}</li>`).join("")}<li>Online matches change your Elo. Practice doesn't.</li><li>No googling: leave the game for more than 5 seconds mid-round and you forfeit that round.</li></ul></div>`;
   wireNav();
-  if ($("#spw")) $("#spw").onsubmit = async e => {
-    e.preventDefault();
-    try { await api("password", { password: $("#spwi").value }); me.haspw = true; store.set("db_had", "1"); $("#spw").outerHTML = `<p class="small ok">Password saved. Remember it to log in anywhere.</p>`; }
-    catch (err) { const el = $("#spwe"); el.hidden = false; el.textContent = err.message; }
-  };
   document.querySelectorAll("[data-mode]").forEach(b => b.onclick = () => { mode = b.dataset.mode; store.set("db_mode", mode); home(); });
   if (mode === "hoops") {
     $("#hai").onclick = () => hoops(true); $("#h2p").onclick = () => hoops(false); $("#hfs").onclick = () => hoops(true, true);
@@ -202,6 +197,31 @@ function pickName(msg, tab = store.get("db_had") ? "login" : "new") {
     } catch (err) { pickName(err.message, tab); }
   };
   $("#restore").onclick = profile;
+}
+
+// Accounts made before passwords existed must add one before playing.
+function mustSetPassword(msg) {
+  stop(); view = "setpw";
+  app.innerHTML = `<div class="panel">
+    <label class="label" for="pw1">Set your password</label>
+    <p class="small">Deep Ball now has passwords. <b>${esc(me.name)}</b>, make one to keep playing. Then you can log in to your account on any device.</p>
+    <form id="sp" class="stack" autocomplete="on">
+      <input type="text" hidden autocomplete="username" value="${esc(me.name)}">
+      <input type="password" id="pw1" maxlength="100" placeholder="Password (6+ characters)" autocomplete="new-password">
+      <input type="password" id="pw2" maxlength="100" placeholder="Type it again" autocomplete="new-password" aria-label="Confirm password">
+      <button>Save password</button>
+    </form>
+    ${msg ? `<p class="err">${esc(msg)}</p>` : ""}
+    ${SCHOOL_NOTE}
+  </div>`;
+  $("#sp").onsubmit = async e => {
+    e.preventDefault();
+    const a = $("#pw1").value, b = $("#pw2").value;
+    if (a.length < 6) return mustSetPassword("Password needs at least 6 characters.");
+    if (a !== b) return mustSetPassword("Those passwords don't match. Try again.");
+    try { await api("password", { password: a }); me.haspw = true; store.set("db_had", "1"); home(); }
+    catch (err) { mustSetPassword(err.message); }
+  };
 }
 
 /* ---------- Matchmaking ---------- */
