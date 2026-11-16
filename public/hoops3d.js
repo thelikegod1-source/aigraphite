@@ -41,6 +41,7 @@ const DUNK = {
   FLUSH_HANG: 0.1, // one-hand cock-back flush: barely touches the rim, then falls away (as in the reference)
   SAG: 0.1,        // body sinks this much while hanging
   LAYUP_BEFORE: 0.55, // letting go of E before this much of the rise turns it into a layup
+  THROW_V: 3.0,    // m/s the ball is thrown down through the rim on the slam
 };
 // ---- behind-the-back escape (glide back + to the new hand side while the ball wraps) ----
 // ---- crossover escape (Kemba-style: sit wide + low, sweep the ball across, slide sideways to the new hand) ----
@@ -220,7 +221,11 @@ export function start(root, opts) {
   function dunk(pl) {
     const P = pl.palms || pl.hands; P[1].getWorldPosition(tmp);
     ball.holder = null; pl.hasBall = false; ball.p.copy(tmp).y = Math.max(tmp.y - BALL_R, RIM.y + 0.12);
-    const fall = 0.09; ball.v.set((RIM.x - ball.p.x) / fall, -4.5, (RIM.z - ball.p.z) / fall).clampLength(0, 9); ball.cool = 0.5; pl.slam = t;
+    // thrown down so it reaches rim height exactly at the rim's center (it used to drop below the rim
+    // before getting there, or clip the rim's edge and bounce out, so dunks didn't count)
+    // T = time to the rim (from a THROW_V throw, kept in a sane range), then the exact downward speed for that time
+    const h = ball.p.y - RIM.y, down = DUNK.THROW_V, T = Math.min(0.14, Math.max(0.06, (-down + Math.sqrt(down * down + 2 * GRAV * h)) / GRAV));
+    ball.v.set((RIM.x - ball.p.x) / T, -(h / T - 0.5 * GRAV * T), (RIM.z - ball.p.z) / T); ball.cool = 0.5; pl.slam = t;
     ball.shot = { team: pl.team, value: 1, dunk: true }; cam.shake = 0.35; rimShake = t; pl.shooting = false; pl.dunking = false; buzz(40); tone(140, .12, "sawtooth", .12);
     // poster: a defender contesting at the rim gets thrown down on his back
     const o = players[1 - pl.team], gap = flat(o.pos).distanceTo(flat(pl.pos));
@@ -479,13 +484,15 @@ export function start(root, opts) {
         }
       }
     }
-    const prevY = ball.p.y; ball.p.addScaledVector(ball.v, dt); ball.p.y -= 0.5 * GRAV * dt * dt; ball.v.y -= GRAV * dt;
+    const prevY = ball.p.y, prevX = ball.p.x, prevZ = ball.p.z; ball.p.addScaledVector(ball.v, dt); ball.p.y -= 0.5 * GRAV * dt * dt; ball.v.y -= GRAV * dt;
     if (ball.spinRate) ballMesh.quaternion.premultiply(spinQ.setFromAxisAngle(spinAxis, ball.spinRate * dt)); else ball.spin += dt * 8;
-    if (ball.p.z - BALL_R < BOARD_Z && ball.p.z > BOARD_Z - 0.3 && Math.abs(ball.p.x) < 0.9 && ball.p.y > 2.9 && ball.p.y < 4.0) { ball.p.z = BOARD_Z + BALL_R; ball.v.z = Math.abs(ball.v.z) * 0.6; tone(220, .04, "square", .05); }
+    const thru = ball.shot?.dunk; // a dunked ball goes straight through: the hand is on the rim, no bounce off it
+    if (!thru && ball.p.z - BALL_R < BOARD_Z && ball.p.z > BOARD_Z - 0.3 && Math.abs(ball.p.x) < 0.9 && ball.p.y > 2.9 && ball.p.y < 4.0) { ball.p.z = BOARD_Z + BALL_R; ball.v.z = Math.abs(ball.v.z) * 0.6; tone(220, .04, "square", .05); }
     const rel = new THREE.Vector3(ball.p.x - RIM.x, 0, ball.p.z - RIM.z), rl = rel.length() || 1e-6;
     const closest = new THREE.Vector3(RIM.x + rel.x / rl * RIM_R, RIM.y, RIM.z + rel.z / rl * RIM_R), n = ball.p.clone().sub(closest), nd = n.length();
-    if (nd < BALL_R + 0.02 && nd > 0) { n.divideScalar(nd); ball.p.copy(closest).addScaledVector(n, BALL_R + 0.02); const vn = ball.v.dot(n); if (vn < 0) { ball.v.addScaledVector(n, -1.55 * vn).multiplyScalar(0.8); tone(700, .03, "triangle", .05); } }
-    if (prevY >= RIM.y && ball.p.y < RIM.y && Math.hypot(ball.p.x - RIM.x, ball.p.z - RIM.z) < RIM_R - 0.05 && ball.v.y < 0 && pause <= 0) {
+    if (!thru && nd < BALL_R + 0.02 && nd > 0) { n.divideScalar(nd); ball.p.copy(closest).addScaledVector(n, BALL_R + 0.02); const vn = ball.v.dot(n); if (vn < 0) { ball.v.addScaledVector(n, -1.55 * vn).multiplyScalar(0.8); tone(700, .03, "triangle", .05); } }
+    const cross = prevY >= RIM.y && ball.p.y < RIM.y ? (prevY - RIM.y) / (prevY - ball.p.y) : -1; // fraction of this step where it passed rim height
+    if (cross >= 0 && Math.hypot(prevX + (ball.p.x - prevX) * cross - RIM.x, prevZ + (ball.p.z - prevZ) * cross - RIM.z) < RIM_R - 0.05 && ball.v.y < 0 && pause <= 0) {
       const s = ball.shot || { team: offense, value: 1 }; ball.v.multiplyScalar(0.3); netSwish = t; scored(s.team, s.value, s.dunk); ball.shot = null;
     }
     if (ball.p.y < BALL_R) { ball.p.y = BALL_R; if (ball.v.y < -1) tone(110, .05, "sine", .07); ball.v.y = Math.abs(ball.v.y) * 0.68; ball.v.x *= 0.92; ball.v.z *= 0.92; }
@@ -718,7 +725,7 @@ export function start(root, opts) {
     NET.onClose(() => { if (!over) finish(ME, true); });
   }
 
-  if (opts.debug) window.__h3 = { players, ball, get score() { return score; }, input, doMove: k => doMove(players[0], k), givePoss: tm => setupPossession(tm), get rig() { return rig; }, get g() { return [gMeter, gWas, gSeq]; } };
+  if (opts.debug) window.__h3 = { players, ball, get score() { return score; }, get pause() { return pause; }, get t() { return t; }, get over() { return over; }, get offense() { return offense; }, input, doMove: k => doMove(players[0], k), givePoss: tm => setupPossession(tm), get rig() { return rig; }, get g() { return [gMeter, gWas, gSeq]; } };
   camera.position.set(0, 4, 14);
   msg(GUEST ? "Their ball · lock in on D" : FREE ? "Freestyle · no clock · cook" : "Your ball · get buckets", 1600);
   if (FREE) {
