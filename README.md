@@ -30,7 +30,7 @@ Every push to `main` updates the site.
 - **Private rooms:** "Play a friend" makes a 5-letter code.
 - **Share card:** image of your result for Instagram/TikTok.
 - **Installable:** Add to Home Screen opens it full-screen like an app.
-- **Spin & Draft:** spin a wheel of all 30 franchises, draft anyone who ever played for that team, 6 picks, best-of-7 series decides it. Ratings live in `public/teams/*.json`, built by `lib/build-teams.py` from public box-score data (1947 to March 2025).
+- **Spin & Draft:** spin a wheel of all 30 franchises, draft anyone who ever played for that team, 6 picks, best-of-7 series decides it. Ratings live in `public/teams/*.json`. `lib/build-teams.py` makes stat-only ratings from public box-score data (1947 to March 2025) into `lib/teams-stats/`; then `python3 lib/build-legacy.py` blends in each player's legacy (All-Star, All-NBA, MVP, Finals MVP, rings, 75th team, Hall of Fame), adds players who changed teams since (MOVES) and the 2025 + 2026 rookies (ROOKIES), and writes `public/teams/`. Edit those lists and re-run it to update rosters.
 
 ## Deep Ball+ and Stripe (owner: an adult 18+)
 1. In Stripe → **Payment Links**, create:
