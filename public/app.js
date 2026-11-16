@@ -224,6 +224,37 @@ function mustSetPassword(msg) {
   };
 }
 
+// Owner menu: every account, newest first, with delete.
+async function accounts(q = "", offset = 0, msg = "") {
+  stop(); view = "accounts";
+  const day = t => new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+  app.innerHTML = `${nav("profile")}<div class="panel"><span class="label">Accounts</span><p class="status pulse">Loading…</p></div>`; wireNav();
+  let d; try { d = await api("admin/accounts", { q, offset }); } catch (e) { return profile(e.message); }
+  if (view !== "accounts") return;
+  const rows = d.accounts.map(a => `<li class="acct">
+      <div class="acct-top"><b>${esc(a.name)}</b>${a.plus ? `<span class="tagp">${a.paid ? "Plus · paying" : "Plus"}</span>` : ""}${a.haspw ? "" : `<span class="tagn">no password</span>`}</div>
+      <p class="small">${a.created ? `Made ${day(a.created)}` : `Made before Nov 16, 2026 · last active ${day(a.last)}`}</p>
+      <p class="small">${a.elo} Elo · ${a.w}-${a.l}${a.d ? "-" + a.d : ""}</p>
+      ${a.name === me.name ? `<span class="tagn">you</span>` : `<button class="ghost danger" data-del="${esc(a.name)}" data-paid="${a.paid ? 1 : ""}">Delete</button>`}</li>`).join("");
+  app.innerHTML = `${nav("profile")}<div class="panel"><span class="label">Accounts · ${d.total}</span>
+    <form id="as" class="btns" autocomplete="off"><input type="text" id="aq" maxlength="16" placeholder="Search usernames" value="${esc(q)}" style="flex:1 1 60%"><button class="ghost" style="flex:0 0 auto">Search</button></form>
+    ${msg ? `<p class="small ok">${esc(msg)}</p>` : ""}
+    ${rows ? `<ul class="accts">${rows}</ul>` : `<p class="small">No accounts found.</p>`}
+    <div class="btns">${offset > 0 ? `<button class="ghost" id="aprev">Newer</button>` : ""}${offset + 100 < d.total ? `<button class="ghost" id="anext">Older</button>` : ""}<button class="ghost" id="aback">Back to profile</button></div></div>`;
+  wireNav(); scrollTo(0, 0);
+  $("#as").onsubmit = e => { e.preventDefault(); accounts($("#aq").value.trim(), 0); };
+  if ($("#aprev")) $("#aprev").onclick = () => accounts(q, Math.max(0, offset - 100));
+  if ($("#anext")) $("#anext").onclick = () => accounts(q, offset + 100);
+  $("#aback").onclick = () => profile();
+  document.querySelectorAll("[data-del]").forEach(b => b.onclick = async () => {
+    const name = b.dataset.del;
+    const warn = b.dataset.paid ? `\n\n${name} is PAYING for Plus. Deleting the account does NOT cancel their Stripe subscription. Cancel it in Stripe too.` : "";
+    if (!confirm(`Delete ${name} for good? Their Elo, record and password are erased. This can't be undone.${warn}`)) return;
+    try { const r = await api("admin/delete", { name }); accounts(q, offset, `Deleted ${r.name}.`); }
+    catch (e) { accounts(q, offset, ""); alert(e.message); }
+  });
+}
+
 /* ---------- Matchmaking ---------- */
 function find() {
   stop(); view = "search";
@@ -1046,6 +1077,7 @@ async function profile(msg) {
     <form id="pf" class="btns" autocomplete="on"><input type="text" hidden autocomplete="username" value="${esc(me.name || "")}"><input type="password" id="pwn" maxlength="100" placeholder="${me.haspw ? "New password" : "Password (6+ characters)"}" autocomplete="new-password" aria-label="New password"><button>${me.haspw ? "Change" : "Save"}</button></form>
     ${SCHOOL_NOTE}
     <div class="btns"><button class="ghost" id="lo">Log out</button></div></div>
+  ${me.admin ? `<div class="panel owner"><span class="label">Owner</span><p class="small">Only you can see this.</p><div class="btns"><button id="accts">Manage accounts</button></div></div>` : ""}
   <div class="panel"><span class="label">Your player code</span>
     <p class="small">Keep this private. Enter it on another phone or computer to bring your name and record with you.</p>
     <p class="mono">${esc(pid)}</p>
@@ -1057,6 +1089,7 @@ async function profile(msg) {
     try { const d = await api("profile", { name: $("#nm").value }); me.name = d.name; store.set("db_name", d.name); profile("Saved."); }
     catch (err) { profile(err.message); }
   };
+  if ($("#accts")) $("#accts").onclick = () => accounts();
   $("#pf").onsubmit = async e => {
     e.preventDefault();
     try { await api("password", { password: $("#pwn").value }); me.haspw = true; store.set("db_had", "1"); profile("Password saved."); }

@@ -42,6 +42,8 @@ async function schema(db) {
     db.prepare("CREATE TABLE IF NOT EXISTS logfail (lname TEXT PRIMARY KEY, n INTEGER, t INTEGER)"),
     db.prepare("CREATE TABLE IF NOT EXISTS verdicts (prompt TEXT, ans TEXT, valid INTEGER, score INTEGER, why TEXT, PRIMARY KEY (prompt, ans))"),
   ]);
+  // Account creation date (added later; accounts from before this have none). Fails harmlessly once the column exists.
+  try { await db.prepare("ALTER TABLE players ADD COLUMN created INTEGER").run(); } catch {}
   schemaReady = true;
 }
 
@@ -605,8 +607,8 @@ export async function onRequest({ request, env, params }) {
     const taken = await db.prepare("SELECT pid FROM players WHERE lname=?").bind(name.toLowerCase()).first();
     if (taken && taken.pid !== pid) return json({ error: `"${name}" is taken. If it's yours, tap Log in. Otherwise try another name.` }, 409);
     if (body.password !== undefined) { const err = pwError(body.password); if (err) return json({ error: err }, 400); }
-    await db.prepare(`INSERT INTO players (pid,name,lname,elo,w,l,d,t) VALUES (?1,?2,?3,1000,0,0,0,?4)
-      ON CONFLICT(pid) DO UPDATE SET name=?2, lname=?3, t=?4`).bind(pid, name, name.toLowerCase(), now).run();
+    await db.prepare(`INSERT INTO players (pid,name,lname,elo,w,l,d,t,created) VALUES (?1,?2,?3,1000,0,0,0,?4,?4)
+      ON CONFLICT(pid) DO UPDATE SET name=?2, lname=?3, t=?4, created=COALESCE(created, CASE WHEN lname IS NULL THEN ?4 END)`).bind(pid, name, name.toLowerCase(), now).run();
     if (body.password !== undefined) await setPassword(db, pid, body.password, now);
     return json({ ok: true, name });
   }
@@ -849,6 +851,30 @@ export async function onRequest({ request, env, params }) {
       if (await save(db, id, m, v)) return json({ ok: true, forfeited: true });
     }
     return json({ error: "busy, try again" }, 503);
+  }
+
+  // Owner-only: list accounts (newest first) and delete them.
+  if (path === "admin/accounts") {
+    if (!(await isAdmin(pid))) return json({ error: "not found" }, 404);
+    const q = clean(body.q, 16).toLowerCase(), off = Math.max(0, Math.min(100000, Number(body.offset) || 0));
+    const where = "p.lname IS NOT NULL AND (?1 = '' OR instr(p.lname, ?1) > 0)";
+    const total = (await db.prepare(`SELECT COUNT(*) AS n FROM players p WHERE ${where}`).bind(q).first()).n;
+    const r = await db.prepare(`SELECT p.name, p.lname, p.elo, p.w, p.l, p.d, p.created, p.t, COALESCE(x.active,0) AS plus, x.customer, a.pid IS NOT NULL AS haspw
+      FROM players p LEFT JOIN plus x ON x.pid=p.pid LEFT JOIN auth a ON a.pid=p.pid WHERE ${where}
+      ORDER BY p.created IS NULL, p.created DESC, p.t DESC LIMIT 100 OFFSET ?2`).bind(q, off).all();
+    const accounts = r.results.map(a => ({ name: a.name, created: a.created, last: a.t, elo: a.elo, w: a.w, l: a.l, d: a.d, haspw: !!a.haspw,
+      plus: !!a.plus, paid: !!a.plus && a.customer && a.customer !== "gift" }));
+    return json({ total, accounts });
+  }
+  if (path === "admin/delete") {
+    if (!(await isAdmin(pid))) return json({ error: "not found" }, 404);
+    const lname = clean(body.name, 16).toLowerCase();
+    const t = lname && await db.prepare("SELECT pid, name FROM players WHERE lname=?").bind(lname).first();
+    if (!t) return json({ error: "No account with that username." }, 404);
+    if (await isAdmin(t.pid)) return json({ error: "You can't delete your own owner account." }, 400);
+    await db.batch(["players", "auth", "plus", "packs", "seen", "mq", "queue", "assign"].map(tb => db.prepare(`DELETE FROM ${tb} WHERE pid=?`).bind(t.pid))
+      .concat(db.prepare("DELETE FROM logfail WHERE lname=?").bind(lname)));
+    return json({ ok: true, name: t.name });
   }
 
   // Owner-only: gift or remove Deep Ball+ for a player code (not tied to Stripe).
