@@ -74,6 +74,7 @@ function home(msg) {
     <span class="label">Matchday</span>
     <div class="pstrip"><span>${esc(me.name)}</span><span class="elo">${me.elo} ELO${me.rank ? ` · #${me.rank}` : ""}</span></div>
     ${me.admin ? `<p class="troll-on">😈 Troll mode on · the button shows up during matches</p>` : ""}
+    ${me.haspw === false ? `<form id="spw" class="stack nudge" autocomplete="on"><input type="text" hidden autocomplete="username" value="${esc(me.name)}"><p class="small"><b>Set a password</b> so you can log in on other devices, like a school Chromebook that forgets you.</p><div class="btns"><input type="password" id="spwi" placeholder="New password (6+ characters)" autocomplete="new-password" style="flex:1 1 60%"><button style="flex:0 0 auto">Save</button></div><p class="err" id="spwe" hidden></p></form>` : ""}
     <p class="online" id="online"><i></i><span>${online ? `${online} online now` : "Checking who's online…"}</span></p>
     <div class="segcards" role="group" aria-label="Game mode">
       ${[["deep", ICON.deep, "Deep Ball", "Name the deepest cut"], ["guess", ICON.guess, "Guess the Player", "Clues drop. Name him first."], ["draft", ICON.draft, "Spin & Draft", "Spin a team. Draft a legend."], ["hoops", ICON.hoops, "Street Hoops", "3D streetball 1v1. First to 15."]]
@@ -89,6 +90,11 @@ function home(msg) {
   <div class="panel"><span class="label">How ${esc(M.name)} works</span>
     <ul class="how">${M.how.map(h => `<li>${esc(h)}</li>`).join("")}<li>Online matches change your Elo. Practice doesn't.</li><li>No googling: leave the game for more than 5 seconds mid-round and you forfeit that round.</li></ul></div>`;
   wireNav();
+  if ($("#spw")) $("#spw").onsubmit = async e => {
+    e.preventDefault();
+    try { await api("password", { password: $("#spwi").value }); me.haspw = true; store.set("db_had", "1"); $("#spw").outerHTML = `<p class="small ok">Password saved. Remember it to log in anywhere.</p>`; }
+    catch (err) { const el = $("#spwe"); el.hidden = false; el.textContent = err.message; }
+  };
   document.querySelectorAll("[data-mode]").forEach(b => b.onclick = () => { mode = b.dataset.mode; store.set("db_mode", mode); home(); });
   if (mode === "hoops") {
     $("#hai").onclick = () => hoops(true); $("#h2p").onclick = () => hoops(false); $("#hfs").onclick = () => hoops(true, true);
@@ -163,19 +169,37 @@ async function hoopsOnline(mode, code) {
   }
 }
 
-function pickName(msg) {
+const SCHOOL_NOTE = `<p class="hint school">On a school Chromebook? School Chrome erases saved logins when it closes, so <b>remember your username and password</b>. You'll need them to log back in.</p>`;
+function pickName(msg, tab = store.get("db_had") ? "login" : "new") {
   view = "name";
+  const isNew = tab === "new";
   app.innerHTML = `<div class="panel">
-    <label class="label" for="nm">Pick a username</label>
-    <p class="small">It shows on the leaderboard. 3–16 letters or numbers.</p>
-    <form id="nf" class="btns" autocomplete="off"><input type="text" id="nm" maxlength="16" placeholder="e.g. BoOutlawFan" value="${esc(store.get("db_name") || "")}"><button>Save</button></form>
+    <div class="seg" role="group" aria-label="Account"><button data-t="new" aria-pressed="${isNew}">New player</button><button data-t="login" aria-pressed="${!isNew}">Log in</button></div>
+    <label class="label" for="nm">${isNew ? "Make your account" : "Welcome back"}</label>
+    ${isNew ? `<p class="small">Your username shows on the leaderboard (3–16 letters or numbers). Your password lets you log in on any device.</p>` : `<p class="small">Log in with your username and password to get your Elo and record back.</p>`}
+    <form id="nf" class="stack" autocomplete="on">
+      <input type="text" id="nm" maxlength="16" placeholder="Username" autocomplete="username" autocapitalize="off" spellcheck="false" value="${esc(store.get("db_name") || "")}">
+      <input type="password" id="pw" maxlength="100" placeholder="${isNew ? "Password (6+ characters)" : "Password"}" autocomplete="${isNew ? "new-password" : "current-password"}">
+      <button>${isNew ? "Create account" : "Log in"}</button>
+    </form>
     ${msg ? `<p class="err">${esc(msg)}</p>` : ""}
-    <p class="small">Played on another device? <button class="link" id="restore">Use your player code</button></p>
+    ${SCHOOL_NOTE}
+    <p class="small">Old account with no password? <button class="link" id="restore">Use your player code</button></p>
   </div>`;
+  document.querySelectorAll("[data-t]").forEach(b => b.onclick = () => pickName("", b.dataset.t));
   $("#nf").onsubmit = async e => {
     e.preventDefault();
-    try { const d = await api("profile", { name: $("#nm").value }); me.name = d.name; store.set("db_name", d.name); await refreshMe(); home(); }
-    catch (err) { pickName(err.message); }
+    const name = $("#nm").value.trim(), password = $("#pw").value;
+    try {
+      if (isNew) {
+        if (password.length < 6) return pickName("Password needs at least 6 characters.", tab);
+        const d = await api("profile", { name, password }); me.name = d.name; store.set("db_name", d.name);
+      } else {
+        const d = await api("login", { username: name, password });
+        pid = d.pid; store.set("db_pid", pid); me = { ...me, name: d.name }; store.set("db_name", d.name);
+      }
+      store.set("db_had", "1"); await refreshMe(); home();
+    } catch (err) { pickName(err.message, tab); }
   };
   $("#restore").onclick = profile;
 }
@@ -997,6 +1021,11 @@ async function profile(msg) {
   <div class="panel"><label class="label" for="nm">Username</label>
     <form id="nf" class="btns" autocomplete="off"><input type="text" id="nm" maxlength="16" value="${esc(me.name || "")}"><button>Save</button></form>
     ${msg ? `<p class="err">${esc(msg)}</p>` : ""}</div>
+  <div class="panel"><span class="label">Password</span>
+    <p class="small">${me.haspw ? "You have a password. Log in with your username and it on any device." : "No password yet. Set one so you can log in on other devices."}</p>
+    <form id="pf" class="btns" autocomplete="on"><input type="text" hidden autocomplete="username" value="${esc(me.name || "")}"><input type="password" id="pwn" maxlength="100" placeholder="${me.haspw ? "New password" : "Password (6+ characters)"}" autocomplete="new-password" aria-label="New password"><button>${me.haspw ? "Change" : "Save"}</button></form>
+    ${SCHOOL_NOTE}
+    <div class="btns"><button class="ghost" id="lo">Log out</button></div></div>
   <div class="panel"><span class="label">Your player code</span>
     <p class="small">Keep this private. Enter it on another phone or computer to bring your name and record with you.</p>
     <p class="mono">${esc(pid)}</p>
@@ -1007,6 +1036,16 @@ async function profile(msg) {
     e.preventDefault();
     try { const d = await api("profile", { name: $("#nm").value }); me.name = d.name; store.set("db_name", d.name); profile("Saved."); }
     catch (err) { profile(err.message); }
+  };
+  $("#pf").onsubmit = async e => {
+    e.preventDefault();
+    try { await api("password", { password: $("#pwn").value }); me.haspw = true; store.set("db_had", "1"); profile("Password saved."); }
+    catch (err) { profile(err.message); }
+  };
+  $("#lo").onclick = () => {
+    if (!me.haspw && !confirm("You have no password yet, so you could only get this account back with your player code. Log out anyway?")) return;
+    pid = crypto.randomUUID().replace(/-/g, ""); store.set("db_pid", pid); store.set("db_name", ""); store.set("db_had", "1");
+    me = { name: null, elo: 1000, w: 0, l: 0, d: 0, rank: null }; pickName("", "login");
   };
   $("#cp").onclick = async () => { try { await navigator.clipboard.writeText(pid); $("#cp").textContent = "Copied"; } catch { $("#cp").textContent = "Select and copy it above"; } };
   $("#rf").onsubmit = async e => {

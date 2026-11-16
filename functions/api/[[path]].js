@@ -38,6 +38,8 @@ async function schema(db) {
     db.prepare("CREATE TABLE IF NOT EXISTS packs (pid TEXT PRIMARY KEY, prompts TEXT, t INTEGER)"),
     db.prepare("CREATE TABLE IF NOT EXISTS lobbies (code TEXT PRIMARY KEY, data TEXT, v INTEGER, t INTEGER)"),
     db.prepare("CREATE TABLE IF NOT EXISTS tours (code TEXT PRIMARY KEY, data TEXT, v INTEGER, t INTEGER)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS auth (pid TEXT PRIMARY KEY, salt TEXT, hash TEXT, t INTEGER)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS logfail (lname TEXT PRIMARY KEY, n INTEGER, t INTEGER)"),
     db.prepare("CREATE TABLE IF NOT EXISTS verdicts (prompt TEXT, ans TEXT, valid INTEGER, score INTEGER, why TEXT, PRIMARY KEY (prompt, ans))"),
   ]);
   schemaReady = true;
@@ -500,6 +502,20 @@ async function advanceTour(db, code) {
   return (await loadT(db, "tours", code))?.d;
 }
 
+// Passwords: salted PBKDF2-SHA256 (100k rounds, the most Workers allows). Only the hash is stored, never the password.
+const hex = b => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, "0")).join("");
+async function pwHash(password, saltHex) {
+  const salt = new Uint8Array(saltHex.match(/../g).map(h => parseInt(h, 16)));
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
+  return hex(await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations: 100000 }, key, 256));
+}
+async function setPassword(db, pid, password, now) {
+  const salt = hex(crypto.getRandomValues(new Uint8Array(16)));
+  await db.prepare("INSERT INTO auth (pid,salt,hash,t) VALUES (?1,?2,?3,?4) ON CONFLICT(pid) DO UPDATE SET salt=?2, hash=?3, t=?4")
+    .bind(pid, salt, await pwHash(password, salt), now).run();
+}
+const pwError = pw => typeof pw !== "string" || pw.length < 6 ? "Password needs at least 6 characters." : pw.length > 100 ? "Password is too long." : null;
+
 async function nameFor(db, pid, fallback) {
   const r = await db.prepare("SELECT name FROM players WHERE pid=?").bind(pid).first();
   return r?.name || clean(fallback, 20) || "Player";
@@ -543,6 +559,30 @@ export async function onRequest({ request, env, params }) {
   // Online count: remember when each player was last here (at most one write per 30s each).
   await db.prepare("INSERT INTO seen (pid,t) VALUES (?1,?2) ON CONFLICT(pid) DO UPDATE SET t=?2 WHERE seen.t < ?3").bind(pid, now, now - 30000).run();
 
+  // Log in with username + password: hands back that account's player ID so any device can pick it up.
+  if (path === "login") {
+    const lname = clean(body.username, 16).trim().toLowerCase(), pw = String(body.password ?? "");
+    const fail = await db.prepare("SELECT n,t FROM logfail WHERE lname=?").bind(lname).first();
+    if (fail && fail.n >= 8 && now - fail.t < 600000) return json({ error: "Too many wrong tries. Wait 10 minutes and try again." }, 429);
+    const acct = lname ? await db.prepare("SELECT p.pid, p.name, a.salt, a.hash FROM players p LEFT JOIN auth a ON a.pid=p.pid WHERE p.lname=?").bind(lname).first() : null;
+    if (acct && !acct.hash) return json({ error: "That account has no password yet. Open Deep Ball on the device you made it on, go to Profile and set one (or use your player code)." }, 400);
+    if (!acct || (await pwHash(pw, acct.salt)) !== acct.hash) {
+      if (lname) await db.prepare("INSERT INTO logfail (lname,n,t) VALUES (?1,1,?2) ON CONFLICT(lname) DO UPDATE SET n=CASE WHEN ?2-logfail.t>600000 THEN 1 ELSE logfail.n+1 END, t=?2").bind(lname, now).run();
+      return json({ error: "Wrong username or password." }, 401);
+    }
+    await db.prepare("DELETE FROM logfail WHERE lname=?").bind(lname).run();
+    return json({ ok: true, pid: acct.pid, name: acct.name });
+  }
+
+  // Set or change the password on the account this player ID belongs to.
+  if (path === "password") {
+    const err = pwError(body.password); if (err) return json({ error: err }, 400);
+    const p = await db.prepare("SELECT lname FROM players WHERE pid=?").bind(pid).first();
+    if (!p?.lname) return json({ error: "Pick a username first." }, 400);
+    await setPassword(db, pid, body.password, now);
+    return json({ ok: true });
+  }
+
   if (path === "online") {
     const r = await db.prepare("SELECT COUNT(*) AS n FROM seen WHERE t > ?").bind(now - 90000).first();
     const q = await db.prepare("SELECT COUNT(*) AS n FROM mq WHERE t > ?").bind(now - 15000).first();
@@ -553,18 +593,21 @@ export async function onRequest({ request, env, params }) {
     const p = await db.prepare("SELECT name, elo, w, l, d, lname FROM players WHERE pid=?").bind(pid).first();
     const admin = await isAdmin(pid);
     const plus = await isPlus(db, pid);
-    if (!p) return json({ name: null, elo: 1000, w: 0, l: 0, d: 0, rank: null, admin, plus });
+    if (!p) return json({ name: null, elo: 1000, w: 0, l: 0, d: 0, rank: null, admin, plus, haspw: false });
+    const haspw = !!(await db.prepare("SELECT 1 AS x FROM auth WHERE pid=?").bind(pid).first());
     const rank = (p.w + p.l + p.d) ? (await db.prepare("SELECT COUNT(*) AS n FROM players WHERE elo > ? AND w+l+d > 0").bind(p.elo).first()).n + 1 : null;
-    return json({ name: p.lname ? p.name : null, elo: p.elo, w: p.w, l: p.l, d: p.d, rank, admin, plus });
+    return json({ name: p.lname ? p.name : null, elo: p.elo, w: p.w, l: p.l, d: p.d, rank, admin, plus, haspw });
   }
 
   if (path === "profile") {
     const name = clean(body.name, 16).replace(/[^A-Za-z0-9 _.-]/g, "").trim();
     if (name.length < 3) return json({ error: "Pick a username with at least 3 letters or numbers." }, 400);
     const taken = await db.prepare("SELECT pid FROM players WHERE lname=?").bind(name.toLowerCase()).first();
-    if (taken && taken.pid !== pid) return json({ error: `"${name}" is taken. Try another.` }, 409);
+    if (taken && taken.pid !== pid) return json({ error: `"${name}" is taken. If it's yours, tap Log in. Otherwise try another name.` }, 409);
+    if (body.password !== undefined) { const err = pwError(body.password); if (err) return json({ error: err }, 400); }
     await db.prepare(`INSERT INTO players (pid,name,lname,elo,w,l,d,t) VALUES (?1,?2,?3,1000,0,0,0,?4)
       ON CONFLICT(pid) DO UPDATE SET name=?2, lname=?3, t=?4`).bind(pid, name, name.toLowerCase(), now).run();
+    if (body.password !== undefined) await setPassword(db, pid, body.password, now);
     return json({ ok: true, name });
   }
 

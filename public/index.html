@@ -649,6 +649,14 @@ button.segcard::after{display:block}
 /* About section sits on the floor: give it a backboard card so it stays readable */
 .about{background:rgba(9,13,20,.82);border:1px solid var(--line);border-radius:10px;padding:18px 20px;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)}
 @media (prefers-reduced-motion:reduce){.logo-ball,.segcard::after{transition:none}}
+/* Accounts */
+.stack{display:flex;flex-direction:column;gap:10px}
+.stack > button{flex:0 0 auto}
+input[type=password]{font:inherit;font-size:1.05rem;width:100%;box-sizing:border-box;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:.75em .9em;transition:border-color .2s,box-shadow .2s}
+input[type=password]:focus{outline:2px solid var(--amber);outline-offset:1px;border-color:transparent;box-shadow:0 0 0 4px rgba(255,138,43,.18)}
+.hint.school{text-transform:none;font-family:var(--body);letter-spacing:0;font-size:.88rem;color:#ffd2ad;line-height:1.4}
+.hint.school b{color:#fff}
+.nudge{border:1px dashed rgba(255,138,43,.5);border-radius:8px;padding:12px}
 </style>
 </head>
 <body>
