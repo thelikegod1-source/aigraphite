@@ -116,7 +116,7 @@ async function hoops(vsAI, freestyle = false) {
   const root = app.querySelector(".hoops-panel"), opts = { vsAI, freestyle, debug: /debug3d/.test(location.search), p1: vsAI ? me.name : "Player 1", onExit: () => { hoopsStop = null; home(); } };
   if (!vsAI) { hoopsStop = window.Hoops.start(root, opts); return; }
   try {
-    const mod = await import("./hoops3d.js?v=89");
+    const mod = await import("./hoops3d.js?v=90");
     if (view === "hoops") hoopsStop = mod.start(root, opts);
   } catch (e) { // older devices without WebGL modules: fall back to the 2D game
     hoopsStop = window.Hoops.start(root, opts);
@@ -144,7 +144,7 @@ async function hoopsOnline(mode, code) {
   $("#nx").onclick = () => { ac.abort(); home(); };
   hoopsStop = () => ac.abort();
   try {
-    const [net, mod] = await Promise.all([import("./hoopnet.js?v=89"), import("./hoops3d.js?v=89")]);
+    const [net, mod] = await Promise.all([import("./hoopnet.js?v=90"), import("./hoops3d.js?v=90")]);
     const link = await net.connect({ api, mode, code, signal: ac.signal, onStatus: (txt, c) => {
       if (view !== "hoops" || !$("#ns")) return;
       $("#ns").textContent = txt;

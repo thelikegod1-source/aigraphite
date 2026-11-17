@@ -3,8 +3,8 @@
 // Dribble moves: Q crossover, X behind the back, F spin, C step back. Beyond the arc = 2, inside = 1. First to 15.
 import * as THREE from "./vendor/three.module.min.js";
 import { mergeGeometries } from "./vendor/BufferGeometryUtils.js";
-import { buildArena, buildProHoop, addAtmosphere } from "./arena3d.js";
-import { DRIB } from "./rig3d.js";
+import { buildArena, buildProHoop, addAtmosphere } from "./arena3d.js?v=90";
+import { DRIB } from "./rig3d.js?v=90";
 
 const RIM = new THREE.Vector3(0, 3.05, 0), RIM_R = 0.23, BALL_R = 0.12, BOARD_Z = -0.38;
 const ARC = 6.75, GRAV = 9.8, TO_WIN = 15, COURT_X = 7.5, COURT_Z = 13.5;
@@ -25,6 +25,7 @@ const CAM = { MIN_DIST: 6.3, MAX_DIST: 10.5, SPREAD: 1.1, HEIGHT_BASE: 1.6, HEIG
 // ---- 2K-style jumping: shooter fades a touch, contests lunge at the shooter ----
 const JUMPS = { FADE: 0.55, CONTEST_LUNGE: 2.2, CONTEST_RANGE: 3.0 }; // m/s back-drift on a jumper, m/s lunge, max lunge distance (m)
 // poster dunks: contest a dunk at the rim and you get thrown down
+const BODY_GAP = 0.92; // m between the two players' centers before they push apart
 const POSTER = { RANGE: 1.4, DOWN: 1.7 }; // m from the dunker, s on the floor (fall + lie + get up)
 const MOVE = { ACCEL: 15, DECEL: 22, AIR: 2.5 }; // m/s^2
 // ---- dunk: a scripted sequence, never a position jump. Times in seconds, heights in meters ----
@@ -110,7 +111,7 @@ export function start(root, opts) {
   players.forEach(p => scene.add(p.group));
   // Mixamo character; the built-in body stays if it can't load
   let rig = null;
-  import("./rig3d.js").then(async R => { const r = await R.loadRig(); if (players.every((p, i) => R.attachRig(p, r, kits[i]))) rig = R; })
+  import("./rig3d.js?v=90").then(async R => { const r = await R.loadRig(); if (players.every((p, i) => R.attachRig(p, r, kits[i]))) rig = R; })
     .catch(e => console.warn("rig", e));
   const ring = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.72, 48), new THREE.MeshBasicMaterial({ color: 0xffd23a, transparent: true, opacity: 0.9 }));
   ring.rotation.x = -Math.PI / 2; ring.position.y = 0.02; scene.add(ring);
@@ -564,12 +565,12 @@ export function start(root, opts) {
         if (NET) { stepPlayer(players[1], dt, remote.x, remote.z, remote.s, remote.was, true); remote.was = remote.s; }
         else { const [ax, az, as] = aiStep(dt, players[1], players[0]); stepPlayer(players[1], dt, ax, az, as, aiPrev.shoot); aiPrev.shoot = as; }
         const a = players[0], b = players[1], d = flat(a.pos).sub(flat(b.pos)), l = FREE && !aiOn ? 99 : d.length();
-        if (l < 0.75 && l > 0) {
+        if (l < BODY_GAP && l > 0) { // keep bodies apart (0.75 m let wide stances, arms and the ball pass through each other)
           // a set defender in front of the ball handler holds their spot; the handler bounces off
           const off = a.hasBall ? a : b.hasBall ? b : null, def = off === a ? b : a;
           const walled = off && def.y === 0 && !(def.stumble > t) && flat(RIM).sub(flat(off.pos)).normalize().dot(flat(def.pos).sub(flat(off.pos)).normalize()) > 0.3;
           const share = walled ? (off === a ? 0.9 : 0.1) : 0.5;
-          d.divideScalar(l).multiplyScalar(0.75 - l); a.pos.addScaledVector(d, share); b.pos.addScaledVector(d, -(1 - share));
+          d.divideScalar(l).multiplyScalar(BODY_GAP - l); a.pos.addScaledVector(d, share); b.pos.addScaledVector(d, -(1 - share));
           if (walled && !off.move) off.vel.multiplyScalar(0.6);
         }
       } else { input.move = null; input.steal = false; if (!GUEST) for (const pl of players) stepPlayer(pl, dt, 0, 0, false, false); } // still fall / hang during the pause

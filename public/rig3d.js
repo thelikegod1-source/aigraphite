@@ -8,7 +8,7 @@ import { clone as cloneSkinned } from "./vendor/SkeletonUtils.js";
 // Add new clips here: drop public/models/anim_<name>.glb and list the name.
 const CLIPS = ["dribble", "idle", "walk", "run", "defense"];
 const HEIGHT = 1.9;
-const POSED = m => (m.posed ||= [m.b.armL, m.b.armR, m.b.foreL, m.b.foreR, m.b.L, m.b.R, m.b.spine, m.b.neck, m.b.head, m.b.upL, m.b.upR, m.b.legL, m.b.legR].filter(Boolean)); // every bone we pose in code
+const POSED = m => (m.posed ||= [m.b.hips, m.b.armL, m.b.armR, m.b.foreL, m.b.foreR, m.b.L, m.b.R, m.b.spine, m.b.neck, m.b.head, m.b.upL, m.b.upR, m.b.legL, m.b.legR].filter(Boolean)); // every bone we pose in code
 const SMOOTH_RATE = 16;
 const SHUFFLE = { STEP: 0.42, WIDTH: 0.38, REACH: 0.14, LIFT: 0.18 }; // m per step, stance width, lead-foot reach, knee lift
 const _lv = new THREE.Vector3(); // 1/s: how fast posed joints catch up (lower = smoother/laggier)
@@ -21,6 +21,22 @@ export const DRIB = {
   LEAN: 0.05,        // forward lean with the ball (rad), + a bit more at speed
   CROUCH: 0.13,      // how much to sit into the stance (m) - 2K-style low, wide ball-handling base
   WIDE: 0.42,         // extra stance width with the ball
+  BAR_W: 0.85,        // how strongly the off arm holds the arm-bar pose (vs. the clip's hanging arm)
+  BAR_OUT: 0.38,      // elbow out to the side
+};
+// ---- jump shot body timing ----
+const SHOT_ANIM = {
+  FOLLOW_HOLD: 0.55, // s the follow-through is held after the release (then the arms relax as he lands)
+  LAND_DIP: 0.16,    // m the body sinks on landing (knees bend to absorb it)
+  LAND_T: 0.32,      // s for that landing dip and recovery
+};
+// ---- athletic stance: sitting down = hips hinge BACK and the chest comes forward over the knees ----
+// (before this only the knees bent, so the upper body ended up behind the knees: a backward "sitting in a chair" lean)
+export const STANCE = {
+  HINGE: 0.42,   // rad the pelvis tips forward at a full crouch (scaled by how low he sits)
+  DEF_HINGE: 0.38, // defensive stance
+  DEF_DIP: 0.13,    // m a defender sits down (was 0.07: stood nearly straight-legged)
+  SPINE_BACK: 0.35, // share of the hinge the upper spine gives back so the chest stays proud and the eyes up
 };
 
 export async function loadRig() {
@@ -81,7 +97,7 @@ export function attachRig(p, rig, colors) {
   for (const [o, info] of gearList) addGear(o, info, colors, root, p.team, textured);
   const bone = n => root.getObjectByName("mixamorig:" + n) || root.getObjectByName("mixamorig" + n);
   const b = { pL: bone("LeftHandMiddle1") || bone("LeftHand"), pR: bone("RightHandMiddle1") || bone("RightHand"), L: bone("LeftHand"), R: bone("RightHand"), armL: bone("LeftArm"), armR: bone("RightArm"),
-    foreL: bone("LeftForeArm"), foreR: bone("RightForeArm"), spine: bone("Spine1"), head: bone("Head"), neck: bone("Neck"),
+    foreL: bone("LeftForeArm"), foreR: bone("RightForeArm"), spine: bone("Spine1"), hips: bone("Hips"), head: bone("Head"), neck: bone("Neck"),
     upL: bone("LeftUpLeg"), upR: bone("RightUpLeg"), legL: bone("LeftLeg"), legR: bone("RightLeg"), footL: bone("LeftFoot"), footR: bone("RightFoot") };
   if (!b.L || !b.R) return false;
   const mixer = new THREE.AnimationMixer(root), actions = {};
@@ -315,7 +331,7 @@ export function updateRig(p, t, dt, other) {
   for (const bn of POSED(m)) { let c = m.clean.get(bn); if (!c) m.clean.set(bn, c = { mix: bn.quaternion.clone(), out: null });
     if (c.out && bn.quaternion.equals(c.out)) bn.quaternion.copy(c.mix); else c.mix.copy(bn.quaternion); }
   // body: dip and lean into moves, sit down on defense, lean back on step backs
-  let dip = def ? 0.07 : p.hasBall ? DRIB.CROUCH : 0, leanF = def ? 0.1 : p.hasBall ? DRIB.LEAN : speed * 0.15, leanS = 0, twist = 0; // (the run clip already leans into the sprint)
+  let dip = def ? STANCE.DEF_DIP : p.hasBall ? DRIB.CROUCH : 0, leanF = def ? 0.1 : p.hasBall ? DRIB.LEAN : speed * 0.15, leanS = 0, twist = 0; // (the run clip already leans into the sprint)
   if (mv?.kind === "behind") { // from a recording: sit low and wide, hips turn to the ball side
     const sFrom = mv.from === 1 ? -1 : 1; dip = 0.13 * Math.min(1, arc * 1.6); leanF += 0.18 * arc; twist = sFrom * 0.55 * arc;
   } else if (mv?.kind === "legs") { // between the legs: deep wide sit, slight lean
@@ -341,14 +357,19 @@ export function updateRig(p, t, dt, other) {
   const air = p.y > 0.02;
   if (p.shooting && !air) dip = 0.12; // gather
   if (m.wasAir && !air) m.land = t; m.wasAir = air;
-  if (m.land && t - m.land < 0.25) dip = Math.max(dip, 0.1 * Math.sin(Math.PI * (t - m.land) / 0.25)); // soft landing
+  if (m.land && t - m.land < SHOT_ANIM.LAND_T) dip = Math.max(dip, SHOT_ANIM.LAND_DIP * Math.sin(Math.PI * (t - m.land) / SHOT_ANIM.LAND_T)); // soft landing: knees absorb it
   if (air && (p.shooting || p.released)) leanF = 0.05;
   m.dip = lerp(m.dip || 0, dip, ease(14)); m.lf = lerp(m.lf || 0, leanF, ease(12)); m.ls = lerp(m.ls || 0, leanS, ease(12)); m.tw = lerp(m.tw || 0, twist, ease(12));
   m.root.position.y = m.baseY;
   p.group.updateMatrixWorld(true);
-  if (!({}).spine) { turn(m, m.b.spine, X, m.lf); turn(m, m.b.spine, Z, -m.ls); turn(m, m.b.spine, Y, m.tw); }
+  // hip hinge: tip the pelvis forward by how low he's sitting; the legs are re-aimed below in player space, so feet stay put
+  const sit = Math.max(0, Math.min(1, m.dip / 0.13)), defSit = def && !air ? 1 : 0;
+  m.hinge = lerp(m.hinge || 0, air ? 0 : Math.max(sit * STANCE.HINGE, defSit * STANCE.DEF_HINGE), ease(10));
+  if (m.b.hips && m.hinge > 0.001) { // tip the pelvis, then give the thighs the same angle back so the legs (clip or posed) are untouched
+    turn(m, m.b.hips, X, m.hinge); for (const u of [m.b.upL, m.b.upR]) if (u) turn(m, u, X, -m.hinge); }
+  if (!({}).spine) { turn(m, m.b.spine, X, m.lf - m.hinge * STANCE.SPINE_BACK); turn(m, m.b.spine, Z, -m.ls); turn(m, m.b.spine, Y, m.tw); }
   // arms: blend in overhead (shots, blocks, dunks) or wide (defense)
-  const followT = p.released ? t - p.released : 9, follow = followT < 0.85;
+  const followT = p.released ? t - p.released : 9, follow = followT < SHOT_ANIM.FOLLOW_HOLD;
   const hang = p.hang > t, slam = p.slam && t - p.slam < 0.25, postSlam = p.slam && t - p.slam < 1.4; // arms come down from the rim pose, not from a different one
   const up = (p.shooting && p.hasBall) || follow || p.dunking || hang || slam || (p.blockT && t - p.blockT < 0.7);
   // shot path: ball at the chest on the gather, rising to the set point, then snapped up on release
@@ -378,7 +399,8 @@ export function updateRig(p, t, dt, other) {
     // off arm: shield when slow; at speed it pumps with the stride like a real sprint (opposite the near leg)
     const runK = Math.min(1, Math.max(0, (speed - 0.05) * 3));
     // (at speed the mocap run clip's own arm swing takes over - real motion beats a hand-posed pump)
-    aimArms(m, p.group, side => side === sd ? null : [V(side * 0.42, -0.82, 0.38), V(-side * 0.35, -0.3, 0.88)], m.guardW * 0.35 * (1 - runK)); // subtle low arm bar, relaxed
+    // arm bar: elbow bent and out, forearm across in front at belt height (was blended at 35%, so the idle clip left it hanging limp)
+    aimArms(m, p.group, side => side === sd ? null : [V(side * DRIB.BAR_OUT, -0.72, 0.5), V(-side * 0.28, -0.22, 0.93)], m.guardW * DRIB.BAR_W * (1 - runK));
   }
   // behind the back (from the recording): ball arm swings down and wraps behind the hips,
   // the other arm reaches out wide and low to take it, then both settle
@@ -487,8 +509,9 @@ export function updateRig(p, t, dt, other) {
     aimArms(m, p.group, side => {
       const hi = Math.max(0, side * m.dSwap), lo = 1 - hi, dig = Math.sin(t * 6.5 + side * 2.1) * 0.06;
       // low hand: wide to the side, a little toward the ball (Park-style arms-out stance); high hand: up to contest
-      const upArm = mixV(V(side * 0.9 + bx * 0.15, -0.25 + by * 0.25, 0.35), V(side * 0.35, 0.75, 0.35), hi);
-      const fore = mixV(V(side * 0.6 + bx * 0.25, -0.15 + by * 0.4 + dig, 0.8), V(side * 0.05, 1, 0.25 + dig), hi);
+      // (the low arm used to point straight out sideways - a scarecrow T; now elbow out, hand forward and low at the ball)
+      const upArm = mixV(V(side * 0.62 + bx * 0.12, -0.5 + by * 0.25, 0.6), V(side * 0.35, 0.75, 0.35), hi);
+      const fore = mixV(V(side * 0.3 + bx * 0.25, -0.3 + by * 0.4 + dig, 0.9), V(side * 0.05, 1, 0.25 + dig), hi);
       return [upArm, fore];
     }, m.defW);
   }
@@ -517,7 +540,7 @@ export function updateRig(p, t, dt, other) {
   if (dt > 0 && !({}).smooth) {
     const k = 1 - Math.exp(-dt * SMOOTH_RATE);
     m.prevQ ||= new Map();
-    for (const bn of [m.b.armL, m.b.armR, m.b.foreL, m.b.foreR, m.b.L, m.b.R, m.b.spine, m.b.neck, m.b.head, m.b.upL, m.b.upR, m.b.legL, m.b.legR]) {
+    for (const bn of [m.b.hips, m.b.armL, m.b.armR, m.b.foreL, m.b.foreR, m.b.L, m.b.R, m.b.spine, m.b.neck, m.b.head, m.b.upL, m.b.upR, m.b.legL, m.b.legR]) {
       if (!bn) continue; const prev = m.prevQ.get(bn);
       if (prev) { prev.slerp(bn.quaternion, k); bn.quaternion.copy(prev); } else m.prevQ.set(bn, bn.quaternion.clone());
     }
@@ -535,12 +558,18 @@ const mixV = (a, b, k) => a.clone().lerp(b, k);
 // Shooting hand is the visual right (side -1); the guide hand sits on the side of the ball.
 function shotForm(side, k) {
   const shoot = side < 0;
-  const gatherUp = V(side * 0.3, -0.75, 0.6), gatherLo = V(-side * 0.2, 0.25, 1);
+  const gatherUp = V(side * 0.32, -0.8, 0.45), gatherLo = V(-side * 0.25, 0.6, 0.75); // ball tucked at the chest, close to the body
+  // lift (halfway): elbow comes up under the ball, forearm vertical, ball rising past the face. Without this key the
+  // blend from gather to set went through arms held straight out in front (a chest push, not a jumper).
+  const liftUp = shoot ? V(side * 0.18, 0.15, 0.97) : V(side * 0.55, 0.1, 0.83);
+  const liftLo = shoot ? V(0, 0.97, 0.22) : V(-side * 0.62, 0.55, 0.55);
   // set point from a reference recording: high, above the forehead, forearms near vertical,
   // guide hand coming across the top of the ball
   const setUp = shoot ? V(side * 0.12, 0.9, 0.42) : V(side * 0.62, 0.62, 0.35);
   const setLo = shoot ? V(0, 1, -0.1) : V(-side * 0.7, 0.62, 0.12);
-  return [mixV(gatherUp, setUp, k), mixV(gatherLo, setLo, k)];
+  const sm = x => x * x * (3 - 2 * x);
+  if (k < 0.5) { const a = sm(k / 0.5); return [mixV(gatherUp, liftUp, a), mixV(gatherLo, liftLo, a)]; }
+  const b = sm((k - 0.5) / 0.5); return [mixV(liftUp, setUp, b), mixV(liftLo, setLo, b)];
 }
 // release: shooting arm extends up and out toward the rim, wrist snaps; guide hand comes off
 // (from the recording: shooting arm finishes nearly straight up, guide hand stays up by the forehead, held for a beat)

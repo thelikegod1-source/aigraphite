@@ -16,7 +16,7 @@ models and game feel. The owner tests on an iPhone and reports problems with scr
   - `public/app.js` – site shell, menus, trivia modes; `public/hoops.js` – old 2D game (fallback).
   - `public/models/` – `player.glb`, `player2.glb` (MakeHuman via MPFB, Mixamo-named 52-bone rig), `anim_*.glb`
     (idle/walk/run retargeted clips), ball textures. `tools/autorig.mjs` – custom auto-rigger.
-- Every deploy: bump `CACHE` in `public/sw.js` AND the `app.js?v=` number in `index.html` + `sw.js` SHELL (currently 89; the site shows a must-refresh screen when index.html links a newer app.js?v=; also bump the hoops3d.js?v= / hoopnet.js?v= imports in app.js when those files change). The version tag stops school web filters from serving a stale app.js.
+- Every deploy: bump `CACHE` in `public/sw.js` AND the `app.js?v=` number in `index.html` + `sw.js` SHELL (currently 90; hoops3d.js imports rig3d.js/arena3d.js with the same ?v= - use ONE specifier for rig3d (static + dynamic import) or it loads twice; the site shows a must-refresh screen when index.html links a newer app.js?v=; also bump the hoops3d.js?v= / hoopnet.js?v= imports in app.js when those files change). The version tag stops school web filters from serving a stale app.js.
 
 ## How to test
 - Local: `wrangler pages dev` with a temp `wrangler.toml` (D1 binding `DB`, `pages_build_output_dir = "public"`); delete it
@@ -50,6 +50,11 @@ F spin, C step back, V between legs, G hesi, R snatch back, T size-up combo. Dif
 13. Measure rigged models only after the skeleton is posed; stand them on their real soles.
 14. NEVER put a `//` comment in the middle of a one-line statement (it has silently cut off code twice).
 15. Match reference clips by cropping in on the player and stepping frame by frame; copy the body motion, not the name.
+18. Stance = hip hinge (STANCE in rig3d.js): sitting down tips the Hips bone forward and gives the thighs the angle back, so the chest
+    comes over the knees. Without it, bent knees left the torso behind them (a backward lean). Off arm holds an arm bar (DRIB.BAR_*).
+    Jump shot arms go gather -> lift (elbow under the ball) -> set; a straight gather->set blend passed through arms held straight out.
+19. Frame-by-frame capture: freeze/unfreeze one rAF at a time (each step = one 33 ms game frame in slow headless WebGL), cam override,
+    screenshot, tile into a contact sheet. Defender off via #hfAi for solo captures.
 17. Dunks: the slam throws the ball so it reaches rim height exactly at the rim center (time T, exact vy), skips the rim/backboard bounce while `ball.shot.dunk`, and the make check uses the exact crossing point inside the frame. Test with `?debug3d` + `__h3.t`/`pause` (in slow headless WebGL keep the window tiny: ~160x200).
 16. Favor smooth over fast, cohesive over flashy. Don't break controls or gameplay; say what a fix could affect.
 
