@@ -3,8 +3,8 @@
 // Dribble moves: Q crossover, X behind the back, F spin, C step back. Beyond the arc = 2, inside = 1. First to 15.
 import * as THREE from "./vendor/three.module.min.js";
 import { mergeGeometries } from "./vendor/BufferGeometryUtils.js";
-import { buildArena, buildProHoop, addAtmosphere } from "./arena3d.js?v=90";
-import { DRIB } from "./rig3d.js?v=90";
+import { buildArena, buildProHoop, addAtmosphere } from "./arena3d.js?v=91";
+import { DRIB } from "./rig3d.js?v=91";
 
 const RIM = new THREE.Vector3(0, 3.05, 0), RIM_R = 0.23, BALL_R = 0.12, BOARD_Z = -0.38;
 const ARC = 6.75, GRAV = 9.8, TO_WIN = 15, COURT_X = 7.5, COURT_Z = 13.5;
@@ -25,6 +25,7 @@ const CAM = { MIN_DIST: 6.3, MAX_DIST: 10.5, SPREAD: 1.1, HEIGHT_BASE: 1.6, HEIG
 // ---- 2K-style jumping: shooter fades a touch, contests lunge at the shooter ----
 const JUMPS = { FADE: 0.55, CONTEST_LUNGE: 2.2, CONTEST_RANGE: 3.0 }; // m/s back-drift on a jumper, m/s lunge, max lunge distance (m)
 // poster dunks: contest a dunk at the rim and you get thrown down
+const TURN = { MAX: 9.5, SETTLE: 0.6 }; // rad/s fastest body turn (~180 deg in 0.33 s); s after a move to keep facing the hoop while drifting
 const BODY_GAP = 0.92; // m between the two players' centers before they push apart
 const POSTER = { RANGE: 1.4, DOWN: 1.7 }; // m from the dunker, s on the floor (fall + lie + get up)
 const MOVE = { ACCEL: 15, DECEL: 22, AIR: 2.5 }; // m/s^2
@@ -111,7 +112,7 @@ export function start(root, opts) {
   players.forEach(p => scene.add(p.group));
   // Mixamo character; the built-in body stays if it can't load
   let rig = null;
-  import("./rig3d.js?v=90").then(async R => { const r = await R.loadRig(); if (players.every((p, i) => R.attachRig(p, r, kits[i]))) rig = R; })
+  import("./rig3d.js?v=91").then(async R => { const r = await R.loadRig(); if (players.every((p, i) => R.attachRig(p, r, kits[i]))) rig = R; })
     .catch(e => console.warn("rig", e));
   const ring = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.72, 48), new THREE.MeshBasicMaterial({ color: 0xffd23a, transparent: true, opacity: 0.9 }));
   ring.rotation.x = -Math.PI / 2; ring.position.y = 0.02; scene.add(ring);
@@ -333,7 +334,7 @@ export function start(root, opts) {
     let steer = !pl.move;
     if (pl.move) {
       const k = (t - pl.move.t0) / pl.move.dur, kind = pl.move.kind;
-      if (k >= 1) { pl.move = null; steer = true; if (pl.queue) { const q = pl.queue; pl.queue = null; pl.moveCool = 0; doMove(pl, q); } }
+      if (k >= 1) { pl.lastMove = { kind: kind, end: t }; pl.move = null; steer = true; if (pl.queue) { const q = pl.queue; pl.queue = null; pl.moveCool = 0; doMove(pl, q); } }
       else if (kind === "behind") { // smooth glide: eases in, carries through the wrap, eases out; then you can steer out of it
         const bell = Math.sin(Math.PI * Math.min(1, k / 0.95)) ** 1.5;
         const glide = pl.move.dir.clone().multiplyScalar(BTB.GLIDE * bell);
@@ -406,11 +407,14 @@ export function start(root, opts) {
     // facing: toward motion, or the hoop when shooting / holding
     // defenders always square up to the ball handler and slide (no flipping between run direction and the man)
     const toO = flat(o.pos).sub(flat(pl.pos)), faceO = toO.lengthSq() > 0.09 ? Math.atan2(toO.x, toO.z) : pl.facing;
-    const face = ["stepback", "hop", "behind", "cross", "legs", "hesi", "snatch"].includes(pl.move?.kind) ? Math.atan2(RIM.x - pl.pos.x, RIM.z - pl.pos.z)
+    // still drifting out of a move (e.g. sliding back after a step back): keep facing the hoop, don't whip around to face the drift
+    const drifting = pl.hasBall && pl.lastMove && t - pl.lastMove.end < TURN.SETTLE && pl.vel.dot(new THREE.Vector3(RIM.x - pl.pos.x, 0, RIM.z - pl.pos.z)) < 0;
+    const face = ["stepback", "hop", "behind", "cross", "legs", "hesi", "snatch"].includes(pl.move?.kind) || drifting ? Math.atan2(RIM.x - pl.pos.x, RIM.z - pl.pos.z)
       : !pl.hasBall && o.hasBall ? faceO
       : pl.vel.lengthSq() > 0.3 && !pl.shooting ? Math.atan2(pl.vel.x, pl.vel.z)
       : pl.hasBall || pl.shooting ? Math.atan2(RIM.x - pl.pos.x, RIM.z - pl.pos.z) : faceO;
-    pl.facing += Math.atan2(Math.sin(face - pl.facing), Math.cos(face - pl.facing)) * (1 - Math.exp(-dt * 9));
+    const dFace = Math.atan2(Math.sin(face - pl.facing), Math.cos(face - pl.facing)) * (1 - Math.exp(-dt * 9));
+    pl.facing += Math.max(-TURN.MAX * dt, Math.min(TURN.MAX * dt, dFace)); // a body can't turn faster than a quick pivot
   }
   // ball between the palms (set point / layup), just above them
   function handsMid(pl) { pl.group.updateMatrixWorld(true); const P = pl.palms || pl.hands; P[0].getWorldPosition(tmp); P[1].getWorldPosition(tmp2); return tmp.clone().add(tmp2).multiplyScalar(0.5).add(new THREE.Vector3(0, BALL_R * 0.8, 0)); }
@@ -860,7 +864,7 @@ function animatePlayer(p, t, dt, other) {
     p.handR.rotation.x = lerp(p.handR.rotation.x, 0, .3);
   }
   if (p.dunking && p.dunkStyle === 2) spinRot = Math.min(1, p.y / 1.4) * Math.PI * 2;
-  if (p.move?.kind === "spin") spinRot = Math.min(1, (t - p.move.t0) / p.move.dur) * Math.PI * 2 * (p.spinDir || 1);
+  if (p.move?.kind === "spin") { const k = Math.min(1, (t - p.move.t0) / p.move.dur); spinRot = k * k * (3 - 2 * k) * Math.PI * 2 * (p.spinDir || 1); } // eased: no instant full-speed start/stop
   if (p.move?.kind === "stepback") lean = -0.25;
   p.group.rotation.y = p.facing + spinRot;
   p.chest.rotation.x = lerp(p.chest.rotation.x, lean, .3);

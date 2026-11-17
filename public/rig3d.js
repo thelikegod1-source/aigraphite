@@ -10,6 +10,9 @@ const CLIPS = ["dribble", "idle", "walk", "run", "defense"];
 const HEIGHT = 1.9;
 const POSED = m => (m.posed ||= [m.b.hips, m.b.armL, m.b.armR, m.b.foreL, m.b.foreR, m.b.L, m.b.R, m.b.spine, m.b.neck, m.b.head, m.b.upL, m.b.upR, m.b.legL, m.b.legR].filter(Boolean)); // every bone we pose in code
 const SMOOTH_RATE = 16;
+// spring stiffness (rad/s): higher = quicker. Critically damped, so never overshoots.
+const SPRING = { FAST: 20, BODY: 15, LAYER: 12, SLOW: 8, CLIP: 11 };
+const MAX_JOINT_SPEED = 12.5; // rad/s (~720 deg/s, a fast wrist on a crossover): cap on any posed joint's rotation speed
 const SHUFFLE = { STEP: 0.42, WIDTH: 0.38, REACH: 0.14, LIFT: 0.18 }; // m per step, stance width, lead-foot reach, knee lift
 const _lv = new THREE.Vector3(); // 1/s: how fast posed joints catch up (lower = smoother/laggier)
 // ---- dribble tuning (procedural: athletic stance, pound the ball beside the hip, eyes up) ----
@@ -293,7 +296,7 @@ let BANK = 1; export function setBank(v) { BANK = v; }
 export function updateRig(p, t, dt, other) {
   const m = p.mx; if (!m) return;
   const speed = Math.min(1, Math.hypot(p.vel.x, p.vel.z) / 5.2), ease = k => 1 - Math.exp(-k * dt);
-  const mv = p.move, mk = mv ? Math.min(1, (t - mv.t0) / mv.dur) : 0, arc = Math.sin(Math.PI * mk); m.lastMk = mk;
+  const mv = p.move, mk = mv ? Math.min(1, (t - mv.t0) / mv.dur) : 0, arc = env(mk); m.lastMk = mk;
   // pick clips for the arms (U) and the legs (L), then fade weights so each half always adds up to 1
   const def = !p.hasBall && other.hasBall, A = m.actions, W = {};
   const walkW = Math.min(1, speed / 0.35) * (1 - Math.max(0, (speed - 0.45) / 0.35)), runW = Math.max(0, Math.min(1, (speed - 0.45) / 0.35));
@@ -305,7 +308,7 @@ export function updateRig(p, t, dt, other) {
   }
   else { W[base + "L"] = 1 - moving; W.walkL = walkW; W.runL = runW; }
   if (def) W.idleU = 1; else { W.idleU = 1 - moving; W.walkU = walkW; W.runU = runW; }
-  for (const k in A) { const tw = W[k] || 0; m.w[k] = lerp(m.w[k] ?? 0, tw, ease(9)); }
+  m.wv ||= {}; for (const k in A) { const tw = W[k] || 0; if (m.w[k] == null) m.w[k] = 0; m.w[k] = Math.max(0, Math.min(1, spr(m.w, k, tw, SPRING.CLIP, dt))); }
   // keep each half summing to 1 so the body never falls back to a T-pose
   for (const half of ["U", "L"]) {
     let sum = 0; for (const k in A) if (k.endsWith(half)) sum += m.w[k];
@@ -337,10 +340,13 @@ export function updateRig(p, t, dt, other) {
   } else if (mv?.kind === "legs") { // between the legs: deep wide sit, slight lean
     dip = 0.2 * Math.sin(Math.PI * Math.min(1, mk * 1.2)); leanF += 0.18 * arc;
   } else if (mv?.kind === "hesi") { // stand up tall (sell the shot), then drop and go
-    dip = mk < 0.42 ? -0.06 * Math.sin(Math.PI * mk / 0.42) : 0.12 * Math.sin(Math.PI * (mk - 0.42) / 0.58); leanF = mk < 0.42 ? -0.05 : 0.3;
+    dip = mk < 0.42 ? -0.06 * Math.sin(Math.PI * mk / 0.42) : 0.12 * Math.sin(Math.PI * (mk - 0.42) / 0.58);
+    const go = smoothK((mk - 0.36) / 0.16), out = smoothK((mk - 0.8) / 0.2); // tall and still -> lean into the burst -> settle
+    leanF = lerp(lerp(-0.05, 0.3, go), leanF, out);
   } else if (mv?.kind === "snatch") { // lunge: bent over the planted leg; snatch: spring back upright; land: sit wide
     const L = 0.42; if (mk < L) { const a = Math.sin(Math.PI * 0.5 * Math.min(1, mk / L * 1.3)); dip = 0.22 * a; leanF = 0.45 * a; }
-    else { const b = (mk - L) / (1 - L); leanF = 0.45 * (1 - Math.min(1, b * 2.2)) - 0.12 * Math.sin(Math.PI * b); dip = b > 0.6 ? 0.18 * Math.sin(Math.PI * (b - 0.6) / 0.4) : 0.05; }
+    else { const b = (mk - L) / (1 - L); leanF = 0.45 * (1 - Math.min(1, b * 2.2)) - 0.12 * Math.sin(Math.PI * b);
+      dip = lerp(0.22, 0.05, smoothK(b / 0.3)) + (b > 0.6 ? 0.13 * Math.sin(Math.PI * (b - 0.6) / 0.4) : 0); } // eases up out of the lunge (was a 0.17 m step)
   } else if (mv?.kind === "cross") { // escape: deep plant, hips and shoulders sway from the ball side to the new side
     const sFrom = mv.from === 1 ? -1 : 1, sw = mk * mk * (3 - 2 * mk);
     dip = 0.2 * Math.sin(Math.PI * Math.min(1, mk * 1.15)); leanF += 0.16 * arc; twist = sFrom * 0.35 * (1 - 2 * sw); leanS = sFrom * 0.28 * (1 - 2 * sw);
@@ -350,7 +356,7 @@ export function updateRig(p, t, dt, other) {
   // bank into turns while moving
   const fr = m.prevFacing == null ? 0 : Math.atan2(Math.sin(p.facing - m.prevFacing), Math.cos(p.facing - m.prevFacing)) / Math.max(dt, 1e-3);
   m.prevFacing = p.facing;
-  if (dt > 0) m.frS = lerp(m.frS || 0, Math.max(-6, Math.min(6, fr)), ease(5));
+  if (dt > 0) spr(m, 'frS', Math.max(-6, Math.min(6, fr)), SPRING.SLOW, dt);
   if (p.hasBall && !def && speed > 0.5) leanS += Math.max(-0.15, Math.min(0.15, (m.frS || 0) * 0.04 * speed)) * BANK; // gentle bank into turns only when running with the ball
   if (p.blockT && t - p.blockT < 0.6 && p.y > 0.02) leanF = 0.28; // contest: body leans into the shooter
   if (p.stumble > t) { leanF = -0.4; leanS = Math.sin(t * 4) * 0.22; }
@@ -359,12 +365,12 @@ export function updateRig(p, t, dt, other) {
   if (m.wasAir && !air) m.land = t; m.wasAir = air;
   if (m.land && t - m.land < SHOT_ANIM.LAND_T) dip = Math.max(dip, SHOT_ANIM.LAND_DIP * Math.sin(Math.PI * (t - m.land) / SHOT_ANIM.LAND_T)); // soft landing: knees absorb it
   if (air && (p.shooting || p.released)) leanF = 0.05;
-  m.dip = lerp(m.dip || 0, dip, ease(14)); m.lf = lerp(m.lf || 0, leanF, ease(12)); m.ls = lerp(m.ls || 0, leanS, ease(12)); m.tw = lerp(m.tw || 0, twist, ease(12));
+  spr(m, 'dip', dip, SPRING.BODY, dt); spr(m, 'lf', leanF, SPRING.BODY, dt); spr(m, 'ls', leanS, SPRING.BODY, dt); spr(m, 'tw', twist, SPRING.BODY, dt);
   m.root.position.y = m.baseY;
   p.group.updateMatrixWorld(true);
   // hip hinge: tip the pelvis forward by how low he's sitting; the legs are re-aimed below in player space, so feet stay put
   const sit = Math.max(0, Math.min(1, m.dip / 0.13)), defSit = def && !air ? 1 : 0;
-  m.hinge = lerp(m.hinge || 0, air ? 0 : Math.max(sit * STANCE.HINGE, defSit * STANCE.DEF_HINGE), ease(10));
+  spr(m, 'hinge', air ? 0 : Math.max(sit * STANCE.HINGE, defSit * STANCE.DEF_HINGE), SPRING.BODY, dt);
   if (m.b.hips && m.hinge > 0.001) { // tip the pelvis, then give the thighs the same angle back so the legs (clip or posed) are untouched
     turn(m, m.b.hips, X, m.hinge); for (const u of [m.b.upL, m.b.upR]) if (u) turn(m, u, X, -m.hinge); }
   if (!({}).spine) { turn(m, m.b.spine, X, m.lf - m.hinge * STANCE.SPINE_BACK); turn(m, m.b.spine, Z, -m.ls); turn(m, m.b.spine, Y, m.tw); }
@@ -374,19 +380,20 @@ export function updateRig(p, t, dt, other) {
   const up = (p.shooting && p.hasBall) || follow || p.dunking || hang || slam || (p.blockT && t - p.blockT < 0.7);
   // shot path: ball at the chest on the gather, rising to the set point, then snapped up on release
   const rise = p.shooting && p.hasBall ? Math.min(1, (p.meter || 0) * 1.25) : 1;
-  m.rise = lerp(m.rise ?? 1, rise, ease(18));
-  m.upW = lerp(m.upW || 0, up ? 1 : 0, ease(up ? 16 : 8));
-  m.defW = lerp(m.defW || 0, def && !up ? 1 : 0, ease(6));
-  if (m.upW > 0.01) aimArms(m, p.group, side =>
+  spr(m, 'rise', rise, SPRING.FAST, dt);
+  m.upW = Math.max(0, Math.min(1, spr(m, 'upS', up ? 1 : 0, up ? SPRING.FAST : SPRING.LAYER, dt)));
+  m.defW = Math.max(0, Math.min(1, spr(m, 'defS', def && !up ? 1 : 0, SPRING.SLOW, dt)));
+  m.upLast ||= {};
+  if (m.upW > 0.01) aimArms(m, p.group, side => !up && m.upLast[side] ? m.upLast[side] : (m.upLast[side] = (
       hang ? hangArm(m, p, side, t) // grip the rim; the slam is a pull-down pulse on the same pose (no snap)
       : p.dunking ? dunkArm(m, p, side)
       : slam || (postSlam && !p.hasBall && !p.shooting && !(p.blockT && t - p.blockT < 0.7)) ? hangArm(m, p, side, t)
       : follow && !p.hasBall ? followThrough(side, Math.min(1, followT / 0.25))
       : p.shooting && p.hasBall ? shotForm(side, m.rise)
-      : (side < 0 ? tv.set(-0.05, 1, 0.35) : tv.set(0.55, -0.1, -0.55)), m.upW); // contest: one arm straight up at the ball, the other back for balance
+      : (side < 0 ? V(-0.05, 1, 0.35) : V(0.55, -0.1, -0.55)))), m.upW); // contest: one arm straight up at the ball, the other back for balance
   // off arm while dribbling: an arm bar out front to shield the ball (the dribble arm stays on the clip)
   const guard = p.hasBall && !p.shooting && !p.dunking && !(mv && (mv.kind === "cross" || mv.kind === "behind" || mv.kind === "swap" || mv.kind === "legs")) ? 1 : 0;
-  m.guardW = lerp(m.guardW || 0, guard, ease(8));
+  m.guardW = Math.max(0, Math.min(1, spr(m, 'guardS', guard, SPRING.LAYER, dt)));
   // dribbling arm: elbow tucked, forearm pumps the ball down beside the hip; off arm shields
   const sd = hand === 1 ? -1 : 1; // visual side of the ball hand (+1 left, -1 right)
   if (m.guardW > 0.01) {
@@ -397,7 +404,7 @@ export function updateRig(p, t, dt, other) {
       ? [mixV(V(side * 0.42, -0.85, 0.3), V(side * 0.45, -0.89, 0.08), push), mixV(V(side * 0.3, -0.72, 0.62), V(side * 0.18, -0.98, 0.1), push)] // low handle: catch at the knee, out to the side
       : null, m.guardW);
     // off arm: shield when slow; at speed it pumps with the stride like a real sprint (opposite the near leg)
-    const runK = Math.min(1, Math.max(0, (speed - 0.05) * 3));
+    const runK = Math.max(0, Math.min(1, spr(m, 'runK', Math.min(1, Math.max(0, (speed - 0.05) * 3)), SPRING.SLOW, dt))); // smoothed: speed spikes on cuts made the arm jerk
     // (at speed the mocap run clip's own arm swing takes over - real motion beats a hand-posed pump)
     // arm bar: elbow bent and out, forearm across in front at belt height (was blended at 35%, so the idle clip left it hanging limp)
     aimArms(m, p.group, side => side === sd ? null : [V(side * DRIB.BAR_OUT, -0.72, 0.5), V(-side * 0.28, -0.22, 0.93)], m.guardW * DRIB.BAR_W * (1 - runK));
@@ -418,29 +425,29 @@ export function updateRig(p, t, dt, other) {
   // ---- per-move arm choreography (each move has its own shape; side +1 = visual left) ----
   if (mv) {
     const k = mk, sm = x => x * x * (3 - 2 * x), win = (a0, a1) => sm(Math.max(0, Math.min(1, (k - a0) / (a1 - a0))));
-    const bell = Math.sin(Math.PI * k), sFrom = mv.from === 1 ? -1 : 1, sBall = hand === 1 ? -1 : 1;
+    const bell = env(k), sFrom = mv.from === 1 ? -1 : 1, sBall = hand === 1 ? -1 : 1;
     const push = win(0, 0.28) * (1 - win(0.28, 0.53)), catchK = win(0.45, 0.7) * (1 - win(0.85, 1));
     if (mv.kind === "cross" || mv.kind === "swap") { // cross: long low sweep in front, arms wide; swap: same, smaller
       const big = mv.kind === "cross" ? 1.45 : 0.6;
-      aimArms(m, p.group, side => side === sFrom
-        ? (push > 0.01 ? [V(side * 0.6 * big, -0.75, 0.3), V(side * 0.35 * big, -0.7, 0.6)] : null)
-        : (catchK > 0.01 ? [V(side * 0.55 * big, -0.75, 0.35), V(-side * 0.1, -0.6, 0.8)] : null), Math.max(push, catchK) * 0.9);
+      if (push > 0.001) aimArms(m, p.group, side => side === sFrom ? [V(side * 0.6 * big, -0.75, 0.3), V(side * 0.35 * big, -0.7, 0.6)] : null, push * 0.9);
+      if (catchK > 0.001) aimArms(m, p.group, side => side === sFrom ? null : [V(side * 0.55 * big, -0.75, 0.35), V(-side * 0.1, -0.6, 0.8)], catchK * 0.9);
     } else if (mv.kind === "legs") { // between the legs: ball hand dives down between the knees, other hand waits behind the far knee
       aimArms(m, p.group, side => side === sFrom
         ? [V(side * 0.12, -0.96, 0.18), V(-side * 0.3, -0.85, -0.25)]
         : [V(side * 0.32, -0.92, -0.05), V(-side * 0.12, -0.92, -0.3)], bell);
     } else if (mv.kind === "hesi") { // hesi: ball pulled up to the hip like a pull-up gather (sell it), off arm out; then push the ball out ahead
-      const hold = win(0, 0.15) * (1 - win(0.38, 0.5)), go = win(0.45, 0.6) * (1 - win(0.85, 1));
+      const hold = win(0, 0.24) * (1 - win(0.36, 0.52)), go = win(0.42, 0.62) * (1 - win(0.82, 1)); // a touch longer: the pickup was a 0.1 s snap
+      const gk = go / (hold + go + 1e-6); // 0 = holding it up (sell), 1 = pushing it out: blended, not switched
       aimArms(m, p.group, side => side === sBall
-        ? (hold > go ? [V(side * 0.3, -0.62, 0.5), V(-side * 0.25, 0.15, 0.95)] : [V(side * 0.22, -0.6, 0.75), V(side * 0.12, -0.85, 0.5)])
+        ? [mixV(V(side * 0.3, -0.62, 0.5), V(side * 0.22, -0.6, 0.75), gk), mixV(V(-side * 0.25, 0.15, 0.95), V(side * 0.12, -0.85, 0.5), gk)]
         : [V(side * 0.7, -0.35, 0.45), V(side * 0.2, 0.1, 0.95)], Math.max(hold, go));
     } else if (mv.kind === "snatch") { // reach the ball WAY out low in front during the lunge, then yank it back to the hip; off arm balances
-      const reachK = win(0, 0.25) * (1 - win(0.38, 0.5)), yank = win(0.42, 0.55) * (1 - win(0.9, 1));
+      const reachK = win(0, 0.28) * (1 - win(0.36, 0.52)), yank = win(0.38, 0.6) * (1 - win(0.86, 1));
       const sOld = mv.from === 1 ? -1 : 1, sNew = -sOld;
-      aimArms(m, p.group, side => reachK > yank
-        ? (side === sOld ? [V(side * 0.35, -0.55, 0.75), V(side * 0.2, -0.8, 0.55)] : [V(side * 0.35, -0.2, 0.9), V(side * 0.1, 0.25, 0.95)]) // lunge: old hand reaches out, off arm balances
-        : (side === sNew ? [V(side * 0.42, -0.9, -0.25), V(side * 0.1, -0.45, 0.9)] : [V(side * 0.4, -0.55, 0.55), V(side * 0.1, -0.2, 0.95)]), // snatch: new hand yanks it to its hip
-        Math.max(reachK, yank));
+      const yk = yank / (reachK + yank + 1e-6); // lunge pose -> snatch pose, blended
+      const lunge = side => side === sOld ? [V(side * 0.35, -0.55, 0.75), V(side * 0.2, -0.8, 0.55)] : [V(side * 0.35, -0.2, 0.9), V(side * 0.1, 0.25, 0.95)]; // old hand reaches out, off arm balances
+      const snat = side => side === sNew ? [V(side * 0.42, -0.9, -0.25), V(side * 0.1, -0.45, 0.9)] : [V(side * 0.4, -0.55, 0.55), V(side * 0.1, -0.2, 0.95)]; // new hand yanks it to its hip
+      aimArms(m, p.group, side => { const a = lunge(side), b = snat(side); return [mixV(a[0], b[0], yk), mixV(a[1], b[1], yk)]; }, Math.max(reachK, yank));
     } else if (mv.kind === "spin") { // spin: ball tucked tight on the hip, off arm flung out wide for momentum
       aimArms(m, p.group, side => side === sBall ? [V(side * 0.35, -0.95, -0.05), V(-side * 0.15, -0.3, 0.94)] : [V(side * 0.95, 0.15, 0.1), V(side * 0.8, 0.35, 0.35)], bell);
     } else if (mv.kind === "stepback" || mv.kind === "hop") { // step back: ball ripped back to the hip, off arm extended to create space
@@ -451,7 +458,7 @@ export function updateRig(p, t, dt, other) {
   const reach = p.reachT && t - p.reachT < 0.35 ? Math.sin(Math.PI * (t - p.reachT) / 0.35) : 0;
   if (reach > 0.01) aimArms(m, p.group, side => side > 0 ? tv.set(0.25, -0.35, 1) : tv.set(-0.6, -0.3, 0.4), reach);
   // legs tuck a little in the air, hang straight on the rim, split on the way up for a dunk
-  m.airW = lerp(m.airW || 0, air && !hang ? 1 : 0, ease(10));
+  m.airW = Math.max(0, Math.min(1, spr(m, 'airS', air && !hang ? 1 : 0, SPRING.LAYER, dt)));
   // dunks: lead knee drives up, back leg trails; otherwise a light tuck
   const airLegs = p.dunking || hang ? (hang ? () => [0.1, 0.15, 0.05] : side => side > 0 ? [1.1, 1.3, 0.05] : [-0.25, 0.7, 0.05])
     : (p.shooting || follow) ? side => [0.32 + (side > 0 ? 0.08 : 0), 0.38, 0.06] // jumper: slight forward kick, knees soft
@@ -459,8 +466,10 @@ export function updateRig(p, t, dt, other) {
     : undefined;
   if (m.airW > 0.01) aimLegs(m, p.group, m.airW, airLegs);
   // crouch with real knee bend (defense stance, gathers, landings, moves), wider base on D
-  const bend = Math.min(1, m.dip / 0.12), stanceW = (1 - m.airW) * (mv?.kind === "cross" || mv?.kind === "behind" || mv?.kind === "legs" || mv?.kind === "snatch" ? 1 : 1 - Math.min(1, speed * 1.4) * 0.75); // escapes keep the wide sit while sliding
-  m.defLeg = lerp(m.defLeg || 0, def ? 1 : 0, ease(6));
+  const bend = Math.min(1, m.dip / 0.12);
+  spr(m, 'stanceK', mv?.kind === "cross" || mv?.kind === "behind" || mv?.kind === "legs" || mv?.kind === "snatch" ? 1 : 1 - Math.min(1, speed * 1.4) * 0.75, SPRING.LAYER, dt); // smoothed: cuts flip speed through zero
+  const stanceW = (1 - m.airW) * m.stanceK; // escapes keep the wide sit while sliding
+  m.defLeg = Math.max(0, Math.min(1, spr(m, 'defLegS', def ? 1 : 0, SPRING.SLOW, dt)));
   if (!({}).legs && stanceW > 0.01 && (bend > 0.02 || m.defLeg > 0.02)) {
     const c = Math.max(bend, m.defLeg * 0.85);
     aimLegs(m, p.group, stanceW, () => [0.15 + 0.6 * c, 0.1 + 0.55 * c, 0.12 + (p.hasBall && !p.shooting ? DRIB.WIDE : 0) + 0.28 * Math.max(m.defLeg, mv?.kind === "behind" ? arc : 0) + (mv?.kind === "cross" || mv?.kind === "legs" || mv?.kind === "snatch" ? 0.36 * Math.min(1, arc * 1.6) : 0)]);
@@ -468,7 +477,7 @@ export function updateRig(p, t, dt, other) {
   // defensive shuffle: steps synced to ground distance (no skating), lead foot reaches, trail foot closes,
   // forward/back motion becomes short choppy steps; feet never cross
   _lv.set(p.vel.x, 0, p.vel.z).applyAxisAngle(Y, -p.group.rotation.y);
-  m.shufW = lerp(m.shufW || 0, def && !air ? Math.min(1, speed * 2.2) * Math.abs(_lv.x) / (Math.hypot(_lv.x, _lv.z) + 1e-3) : 0, ease(10));
+  m.shufW = Math.max(0, Math.min(1, spr(m, 'shufS', def && !air ? Math.min(1, speed * 2.2) * Math.abs(_lv.x) / (Math.hypot(_lv.x, _lv.z) + 1e-3) : 0, SPRING.LAYER, dt)));
   if (m.shufW > 0.01) {
     _lv.set(p.vel.x, 0, p.vel.z).applyAxisAngle(Y, -p.group.rotation.y); // velocity in the player's own frame
     const lat = _lv.x, fb = _lv.z, sp = Math.hypot(lat, fb);
@@ -504,7 +513,7 @@ export function updateRig(p, t, dt, other) {
   // the low hand tracks the ball, and both "dig" a little - alive, not frozen
   if (m.defW > 0.01 && !reach && speed < 0.75) { // sprinting on D: let the run swing through
     if (!m.dHandT || t > m.dHandT) { m.dHand = m.dHand === 1 ? -1 : 1; m.dHandT = t + 1.1 + Math.random() * 1.2; }
-    m.dSwap = lerp(m.dSwap ?? 0, m.dHand, ease(5)); // smooth trade (-1..1)
+    spr(m, 'dSwap', m.dHand, SPRING.SLOW, dt); // smooth trade (-1..1)
     let bx = 0, by = -0.3; if (p.ballLocal) { bx = Math.max(-0.9, Math.min(0.9, p.ballLocal.x)); by = Math.max(-0.7, Math.min(0.2, p.ballLocal.y - 1.1)); }
     aimArms(m, p.group, side => {
       const hi = Math.max(0, side * m.dSwap), lo = 1 - hi, dig = Math.sin(t * 6.5 + side * 2.1) * 0.06;
@@ -522,7 +531,7 @@ export function updateRig(p, t, dt, other) {
     const dx = loc.x - tmpB.x, dy = loc.y - tmpB.y, dz = loc.z - tmpB.z;
     const yaw = Math.max(-0.6, Math.min(0.6, Math.atan2(dx, dz))), pitch = Math.max(-0.15, Math.min(0.4, Math.atan2(dy, Math.hypot(dx, dz))));
     const ok = dz > -0.3 ? 1 : 0.3; // don't snap around to look straight behind
-    m.hy = lerp(m.hy || 0, yaw * ok, ease(5)); m.hp = lerp(m.hp || 0, pitch * ok, ease(5));
+    spr(m, 'hy', yaw * ok, SPRING.SLOW, dt); spr(m, 'hp', pitch * ok, SPRING.SLOW, dt);
     turn(m, m.b.head, Y, m.hy * 0.65); turn(m, m.b.head, X, -m.hp * 0.7);
     if (m.b.neck) { turn(m, m.b.neck, Y, m.hy * 0.35); turn(m, m.b.neck, X, -m.hp * 0.3); }
   }
@@ -542,7 +551,11 @@ export function updateRig(p, t, dt, other) {
     m.prevQ ||= new Map();
     for (const bn of [m.b.hips, m.b.armL, m.b.armR, m.b.foreL, m.b.foreR, m.b.L, m.b.R, m.b.spine, m.b.neck, m.b.head, m.b.upL, m.b.upR, m.b.legL, m.b.legR]) {
       if (!bn) continue; const prev = m.prevQ.get(bn);
-      if (prev) { prev.slerp(bn.quaternion, k); bn.quaternion.copy(prev); } else m.prevQ.set(bn, bn.quaternion.clone());
+      if (prev) {
+        // no joint may rotate faster than a real one can: any leftover pose switch becomes a quick swing, never a teleport
+        const ang = prev.angleTo(bn.quaternion) * k, lim = MAX_JOINT_SPEED * dt;
+        prev.slerp(bn.quaternion, ang > lim ? k * lim / ang : k); bn.quaternion.copy(prev);
+      } else m.prevQ.set(bn, bn.quaternion.clone());
     }
   }
   for (const bn of POSED(m)) { const c = m.clean.get(bn); (c.out ||= new THREE.Quaternion()).copy(bn.quaternion); }
@@ -551,6 +564,16 @@ export function updateRig(p, t, dt, other) {
   p.handL = p.hands[0]; p.handR = p.hands[1];
 }
 const lerp = (a, b, k) => a + (b - a) * k;
+// critically damped spring toward a target: starts from zero speed, speeds up, settles with no overshoot.
+// (The old exponential ease moved fastest on its FIRST frame, so every blend that switched on jerked into motion.)
+function spr(o, key, target, w, dt) {
+  if (o[key] == null) { o[key] = target; o[key + "V"] = 0; return target; }
+  if (!(dt > 0)) return o[key];
+  const v = o[key + "V"] || 0, nv = v + (w * w * (target - o[key]) - 2 * w * v) * dt;
+  o[key + "V"] = nv; return (o[key] += nv * dt);
+}
+// move envelope 0 -> 1 -> 0 that eases in and out (zero speed at both ends), peaking mid-move like sin(pi k) did
+function env(k) { k = Math.max(0, Math.min(1, k)); const a = Math.min(1, k / 0.35), b = Math.min(1, (1 - k) / 0.35); return Math.min(a * a * (3 - 2 * a), b * b * (3 - 2 * b)); }
 const smoothK = x => { x = Math.max(0, Math.min(1, x)); return x * x * (3 - 2 * x); };
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const mixV = (a, b, k) => a.clone().lerp(b, k);

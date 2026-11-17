@@ -16,7 +16,7 @@ models and game feel. The owner tests on an iPhone and reports problems with scr
   - `public/app.js` – site shell, menus, trivia modes; `public/hoops.js` – old 2D game (fallback).
   - `public/models/` – `player.glb`, `player2.glb` (MakeHuman via MPFB, Mixamo-named 52-bone rig), `anim_*.glb`
     (idle/walk/run retargeted clips), ball textures. `tools/autorig.mjs` – custom auto-rigger.
-- Every deploy: bump `CACHE` in `public/sw.js` AND the `app.js?v=` number in `index.html` + `sw.js` SHELL (currently 90; hoops3d.js imports rig3d.js/arena3d.js with the same ?v= - use ONE specifier for rig3d (static + dynamic import) or it loads twice; the site shows a must-refresh screen when index.html links a newer app.js?v=; also bump the hoops3d.js?v= / hoopnet.js?v= imports in app.js when those files change). The version tag stops school web filters from serving a stale app.js.
+- Every deploy: bump `CACHE` in `public/sw.js` AND the `app.js?v=` number in `index.html` + `sw.js` SHELL (currently 91; hoops3d.js imports rig3d.js/arena3d.js with the same ?v= - use ONE specifier for rig3d (static + dynamic import) or it loads twice; the site shows a must-refresh screen when index.html links a newer app.js?v=; also bump the hoops3d.js?v= / hoopnet.js?v= imports in app.js when those files change). The version tag stops school web filters from serving a stale app.js.
 
 ## How to test
 - Local: `wrangler pages dev` with a temp `wrangler.toml` (D1 binding `DB`, `pages_build_output_dir = "public"`); delete it
@@ -55,6 +55,11 @@ F spin, C step back, V between legs, G hesi, R snatch back, T size-up combo. Dif
     Jump shot arms go gather -> lift (elbow under the ball) -> set; a straight gather->set blend passed through arms held straight out.
 19. Frame-by-frame capture: freeze/unfreeze one rAF at a time (each step = one 33 ms game frame in slow headless WebGL), cam override,
     screenshot, tile into a contact sheet. Defender off via #hfAi for solo captures.
+20. Smoothness: every blend in rig3d.js is a critically damped spring (spr(), SPRING rates) - exponential eases move fastest on
+    their first frame, so anything switching on jerked. Move envelopes use env() (zero speed at both ends), never sin(pi k).
+    Never switch poses with a condition (a > b ? poseA : poseB) - blend them. Joints are capped at MAX_JOINT_SPEED.
+    Body facing turns at most TURN.MAX rad/s and keeps facing the hoop while drifting out of a move (no 180 whip after a step back).
+    Measure with a per-frame bone-rotation recorder (pops = >12 deg in one 33 ms frame and 2.5x its neighbours; jerk = |change in speed|).
 17. Dunks: the slam throws the ball so it reaches rim height exactly at the rim center (time T, exact vy), skips the rim/backboard bounce while `ball.shot.dunk`, and the make check uses the exact crossing point inside the frame. Test with `?debug3d` + `__h3.t`/`pause` (in slow headless WebGL keep the window tiny: ~160x200).
 16. Favor smooth over fast, cohesive over flashy. Don't break controls or gameplay; say what a fix could affect.
 
