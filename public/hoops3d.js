@@ -3,8 +3,8 @@
 // Dribble moves: Q crossover, X behind the back, F spin, C step back. Beyond the arc = 2, inside = 1. First to 15.
 import * as THREE from "./vendor/three.module.min.js";
 import { mergeGeometries } from "./vendor/BufferGeometryUtils.js";
-import { buildArena, buildProHoop, addAtmosphere } from "./arena3d.js?v=91";
-import { DRIB } from "./rig3d.js?v=91";
+import { buildArena, buildProHoop, addAtmosphere } from "./arena3d.js?v=92";
+import { DRIB } from "./rig3d.js?v=92";
 
 const RIM = new THREE.Vector3(0, 3.05, 0), RIM_R = 0.23, BALL_R = 0.12, BOARD_Z = -0.38;
 const ARC = 6.75, GRAV = 9.8, TO_WIN = 15, COURT_X = 7.5, COURT_Z = 13.5;
@@ -113,7 +113,7 @@ export function start(root, opts) {
   players.forEach(p => scene.add(p.group));
   // Mixamo character; the built-in body stays if it can't load
   let rig = null;
-  import("./rig3d.js?v=91").then(async R => { const r = await R.loadRig(); if (players.every((p, i) => R.attachRig(p, r, kits[i]))) rig = R; })
+  import("./rig3d.js?v=92").then(async R => { const r = await R.loadRig(); if (players.every((p, i) => R.attachRig(p, r, kits[i]))) rig = R; })
     .catch(e => console.warn("rig", e));
   const ring = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.72, 48), new THREE.MeshBasicMaterial({ color: 0xffd23a, transparent: true, opacity: 0.9 }));
   ring.rotation.x = -Math.PI / 2; ring.position.y = 0.02; scene.add(ring);

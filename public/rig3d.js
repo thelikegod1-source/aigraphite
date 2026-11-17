@@ -8,7 +8,7 @@ import { clone as cloneSkinned } from "./vendor/SkeletonUtils.js";
 // Add new clips here: drop public/models/anim_<name>.glb and list the name.
 const CLIPS = ["dribble", "idle", "walk", "run", "defense"];
 const HEIGHT = 1.9;
-const POSED = m => (m.posed ||= [m.b.hips, m.b.armL, m.b.armR, m.b.foreL, m.b.foreR, m.b.L, m.b.R, m.b.spine, m.b.neck, m.b.head, m.b.upL, m.b.upR, m.b.legL, m.b.legR].filter(Boolean)); // every bone we pose in code
+const POSED = m => (m.posed ||= [m.b.hips, m.b.armL, m.b.armR, m.b.foreL, m.b.foreR, m.b.L, m.b.R, m.b.spine, m.b.neck, m.b.head, m.b.upL, m.b.upR, m.b.legL, m.b.legR, m.b.footL, m.b.footR].filter(Boolean)); // every bone we pose or smooth in code (feet: smoothed only)
 const SMOOTH_RATE = 16;
 // spring stiffness (rad/s): higher = quicker. Critically damped, so never overshoots.
 const SPRING = { FAST: 20, BODY: 15, LAYER: 12, SLOW: 8, CLIP: 11 };
@@ -549,7 +549,7 @@ export function updateRig(p, t, dt, other) {
   if (dt > 0 && !({}).smooth) {
     const k = 1 - Math.exp(-dt * SMOOTH_RATE);
     m.prevQ ||= new Map();
-    for (const bn of [m.b.hips, m.b.armL, m.b.armR, m.b.foreL, m.b.foreR, m.b.L, m.b.R, m.b.spine, m.b.neck, m.b.head, m.b.upL, m.b.upR, m.b.legL, m.b.legR]) {
+    for (const bn of [m.b.hips, m.b.armL, m.b.armR, m.b.foreL, m.b.foreR, m.b.L, m.b.R, m.b.spine, m.b.neck, m.b.head, m.b.upL, m.b.upR, m.b.legL, m.b.legR, m.b.footL, m.b.footR]) { // feet too: shin corrections used to flick them
       if (!bn) continue; const prev = m.prevQ.get(bn);
       if (prev) {
         // no joint may rotate faster than a real one can: any leftover pose switch becomes a quick swing, never a teleport
