@@ -340,7 +340,7 @@ export function updateRig(p, t, dt, other) {
   } else if (mv?.kind === "legs") { // between the legs: deep wide sit, slight lean
     dip = 0.2 * Math.sin(Math.PI * Math.min(1, mk * 1.2)); leanF += 0.18 * arc;
   } else if (mv?.kind === "hesi") { // stand up tall (sell the shot), then drop and go
-    dip = mk < 0.42 ? -0.06 * Math.sin(Math.PI * mk / 0.42) : 0.12 * Math.sin(Math.PI * (mk - 0.42) / 0.58);
+    dip = mk < 0.42 ? 0.04 : 0.04 + 0.1 * Math.sin(Math.PI * (mk - 0.42) / 0.58); // sell it with soft knees (locked-straight legs looked stiff), then sit and go
     const go = smoothK((mk - 0.36) / 0.16), out = smoothK((mk - 0.8) / 0.2); // tall and still -> lean into the burst -> settle
     leanF = lerp(lerp(-0.05, 0.3, go), leanF, out);
   } else if (mv?.kind === "snatch") { // lunge: bent over the planted leg; snatch: spring back upright; land: sit wide
@@ -351,8 +351,8 @@ export function updateRig(p, t, dt, other) {
     const sFrom = mv.from === 1 ? -1 : 1, sw = mk * mk * (3 - 2 * mk);
     dip = 0.2 * Math.sin(Math.PI * Math.min(1, mk * 1.15)); leanF += 0.16 * arc; twist = sFrom * 0.35 * (1 - 2 * sw); leanS = sFrom * 0.28 * (1 - 2 * sw);
   } else if (false) { const sgn = p.hand ? -1 : 1; dip = 0.1 * arc; leanF += 0.25 * arc; leanS = sgn * 0.35 * arc; twist = sgn * 0.4 * arc; }
-  else if (mv?.kind === "spin") { dip = 0.1; leanF = 0.12; }
-  else if (mv?.kind === "stepback" || mv?.kind === "hop") { leanF = -0.35 * arc; dip = -0.08 * arc; }
+  else if (mv?.kind === "spin") { dip = 0.15; leanF = 0.22; } // low and over the ball through the pivot (was tall and upright)
+  else if (mv?.kind === "stepback" || mv?.kind === "hop") { leanF = DRIB.LEAN - 0.12 * arc; dip = 0.07 + 0.07 * arc; } // hop back and land low, shoulders square, ready to rise (was standing tall, leaning way back)
   // bank into turns while moving
   const fr = m.prevFacing == null ? 0 : Math.atan2(Math.sin(p.facing - m.prevFacing), Math.cos(p.facing - m.prevFacing)) / Math.max(dt, 1e-3);
   m.prevFacing = p.facing;
@@ -440,18 +440,18 @@ export function updateRig(p, t, dt, other) {
       const gk = go / (hold + go + 1e-6); // 0 = holding it up (sell), 1 = pushing it out: blended, not switched
       aimArms(m, p.group, side => side === sBall
         ? [mixV(V(side * 0.3, -0.62, 0.5), V(side * 0.22, -0.6, 0.75), gk), mixV(V(-side * 0.25, 0.15, 0.95), V(side * 0.12, -0.85, 0.5), gk)]
-        : [V(side * 0.7, -0.35, 0.45), V(side * 0.2, 0.1, 0.95)], Math.max(hold, go));
+        : [V(side * 0.6, -0.6, 0.5), V(side * 0.12, -0.25, 0.96)], Math.max(hold, go)); // off arm: bent, low, in front
     } else if (mv.kind === "snatch") { // reach the ball WAY out low in front during the lunge, then yank it back to the hip; off arm balances
       const reachK = win(0, 0.28) * (1 - win(0.36, 0.52)), yank = win(0.38, 0.6) * (1 - win(0.86, 1));
       const sOld = mv.from === 1 ? -1 : 1, sNew = -sOld;
       const yk = yank / (reachK + yank + 1e-6); // lunge pose -> snatch pose, blended
-      const lunge = side => side === sOld ? [V(side * 0.35, -0.55, 0.75), V(side * 0.2, -0.8, 0.55)] : [V(side * 0.35, -0.2, 0.9), V(side * 0.1, 0.25, 0.95)]; // old hand reaches out, off arm balances
+      const lunge = side => side === sOld ? [V(side * 0.35, -0.55, 0.75), V(side * 0.2, -0.8, 0.55)] : [V(side * 0.5, -0.5, 0.6), V(side * 0.15, -0.1, 0.98)]; // old hand reaches out, off arm bent for balance
       const snat = side => side === sNew ? [V(side * 0.42, -0.9, -0.25), V(side * 0.1, -0.45, 0.9)] : [V(side * 0.4, -0.55, 0.55), V(side * 0.1, -0.2, 0.95)]; // new hand yanks it to its hip
       aimArms(m, p.group, side => { const a = lunge(side), b = snat(side); return [mixV(a[0], b[0], yk), mixV(a[1], b[1], yk)]; }, Math.max(reachK, yank));
     } else if (mv.kind === "spin") { // spin: ball tucked tight on the hip, off arm flung out wide for momentum
-      aimArms(m, p.group, side => side === sBall ? [V(side * 0.35, -0.95, -0.05), V(-side * 0.15, -0.3, 0.94)] : [V(side * 0.95, 0.15, 0.1), V(side * 0.8, 0.35, 0.35)], bell);
+      aimArms(m, p.group, side => side === sBall ? [V(side * 0.35, -0.95, -0.05), V(-side * 0.15, -0.3, 0.94)] : [V(side * 0.75, -0.15, 0.35), V(side * 0.25, 0.05, 0.95)], bell); // off elbow leads the pivot (not flung overhead)
     } else if (mv.kind === "stepback" || mv.kind === "hop") { // step back: ball ripped back to the hip, off arm extended to create space
-      aimArms(m, p.group, side => side === sBall ? [V(side * 0.4, -0.9, -0.2), V(side * 0.12, -0.5, 0.85)] : [V(side * 0.3, -0.35, 0.88), V(side * 0.15, 0.0, 1)], bell);
+      aimArms(m, p.group, side => side === sBall ? [V(side * 0.4, -0.9, -0.2), V(side * 0.12, -0.5, 0.85)] : [V(side * 0.45, -0.6, 0.62), V(side * 0.12, -0.15, 0.98)], bell); // off arm bent and low
     }
   }
   // reach for a steal: one arm jabs low at the ball

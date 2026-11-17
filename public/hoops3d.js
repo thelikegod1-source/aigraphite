@@ -25,6 +25,7 @@ const CAM = { MIN_DIST: 6.3, MAX_DIST: 10.5, SPREAD: 1.1, HEIGHT_BASE: 1.6, HEIG
 // ---- 2K-style jumping: shooter fades a touch, contests lunge at the shooter ----
 const JUMPS = { FADE: 0.55, CONTEST_LUNGE: 2.2, CONTEST_RANGE: 3.0 }; // m/s back-drift on a jumper, m/s lunge, max lunge distance (m)
 // poster dunks: contest a dunk at the rim and you get thrown down
+const MOVE_BALL = { BEHIND_BACK: 0.3, BEHIND_PULL: 0.9 }; // behind-the-back: m behind the body center the ball passes, how hard the path bends there
 const TURN = { MAX: 9.5, SETTLE: 0.6 }; // rad/s fastest body turn (~180 deg in 0.33 s); s after a move to keep facing the hoop while drifting
 const BODY_GAP = 0.92; // m between the two players' centers before they push apart
 const POSTER = { RANGE: 1.4, DOWN: 1.7 }; // m from the dunker, s on the floor (fall + lie + get up)
@@ -449,7 +450,9 @@ export function start(root, opts) {
           ball.p.lerpVectors(tmp, tmp2, e);
           ball.p.y = e < 0.5 ? y0 + (BALL_R - y0) * (e / 0.5) ** 2 : BALL_R + (y1 - BALL_R) * (1 - (1 - (e - 0.5) / 0.5) ** 2);
           const f = fwdOf(pl);
-          if (kind === "behind") ball.p.addScaledVector(f, -0.45 * Math.sin(Math.PI * e)); else if (kind === "legs") { ball.p.addScaledVector(f, -0.08 * Math.sin(Math.PI * e)); ball.p.y = Math.min(ball.p.y, 0.55); } // under the hips, between the feet else ball.p.addScaledVector(f, 0.12 * Math.sin(Math.PI * e));
+          if (kind === "behind") { // pass BEHIND the hips: pull the path toward a point behind the body (it used to bounce between the feet, in front)
+            const w = Math.sin(Math.PI * e) * MOVE_BALL.BEHIND_PULL, bx = pl.pos.x - f.x * MOVE_BALL.BEHIND_BACK, bz = pl.pos.z - f.z * MOVE_BALL.BEHIND_BACK;
+            ball.p.x += (bx - ball.p.x) * w; ball.p.z += (bz - ball.p.z) * w; } else if (kind === "legs") { ball.p.addScaledVector(f, -0.08 * Math.sin(Math.PI * e)); ball.p.y = Math.min(ball.p.y, 0.55); } // under the hips, between the feet else ball.p.addScaledVector(f, 0.12 * Math.sin(Math.PI * e));
           if (e >= 0.5 && !pl.moveBounce) { pl.moveBounce = true; if (pl.team === ME) tone(95, .04, "sine", .05); } else if (e < 0.5) pl.moveBounce = false;
         }
         ball.spin += dt * 6;
